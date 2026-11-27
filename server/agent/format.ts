@@ -1,6 +1,6 @@
 import type { Task } from "../task-store.ts";
 import type { ActionResult } from "./actions.ts";
-import { dayName, dueLabel } from "./date.ts";
+import { dueBadge, shortDate } from "./date.ts";
 
 const PRIORITY_LABEL = { high: "高优先级", medium: "中优先级", low: "低优先级" } as const;
 const ESTIMATE_LABEL = { large: "大工作量", medium: "中工作量", small: "小工作量" } as const;
@@ -15,14 +15,21 @@ function tagText(task: Task): string {
   if (typeof estimate === "string") {
     tags.push(ESTIMATE_LABEL[estimate as keyof typeof ESTIMATE_LABEL] ?? estimate);
   }
-  if (typeof task.dueAt === "string") tags.push(dueLabel(task.dueAt));
   if (typeof task.detail === "string") tags.push(task.detail);
   return tags.length > 0 ? ` [${tags.join(" · ")}]` : "";
 }
 
+// 日期放在标题前面，不同日期的待办在清单里一眼分得开
+function dateBadge(task: Task): string {
+  return typeof task.dueAt === "string" ? `[${dueBadge(task.dueAt)}] ` : "";
+}
+
 function renderRows(tasks: Task[]): string {
   return tasks
-    .map((task, index) => `${task.done ? "☑" : "☐"} ${index + 1}. ${task.title}${tagText(task)}`)
+    .map(
+      (task, index) =>
+        `${task.done ? "☑" : "☐"} ${index + 1}. ${dateBadge(task)}${task.title}${tagText(task)}`,
+    )
     .join("\n");
 }
 
@@ -40,9 +47,9 @@ export function formatResults(results: ActionResult[], tasks: Task[]): string {
   const dueResult = results.find((result) => result.action.type === "due");
   if (dueResult?.action.type === "due") {
     const dueTasks = dueResult.tasks ?? [];
-    const day = dayName(dueResult.action.date);
-    if (dueTasks.length === 0) return `${day}没有到期待办。`;
-    return [`${day}有 ${dueTasks.length} 项待办到期：`, renderRows(dueTasks)].join("\n");
+    const day = shortDate(dueResult.action.date);
+    if (dueTasks.length === 0) return `${day} 没有需要完成的待办。`;
+    return [`${day} 有 ${dueTasks.length} 项待办需要完成：`, renderRows(dueTasks)].join("\n");
   }
 
   const parts: string[] = [];

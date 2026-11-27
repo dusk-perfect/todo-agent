@@ -177,9 +177,48 @@ interface Attributes extends Record<string, unknown> {
   dueAt?: string;
 }
 
+// 「今天内完成」「明天之前搞定」是整句的截止说明，不是第二件事。
+// 判断标准：这一小句去掉日期、范围词和完成动词后什么都不剩。
+const DEADLINE_RANGE_RE = /^(?:之内|以内|内|之前|以前|前)/;
+const DEADLINE_VERB_RE = /(?:完成|做完|搞定|弄完|弄好|办完)$/;
+
+function deadlineSegment(segment: string): string | null {
+  const due = parseDueDate(segment);
+  if (!due) return null;
+  const left = segment
+    .replace(due.matched, "")
+    .replace(/[，,。.；;、\s]/g, "")
+    .replace(DEADLINE_RANGE_RE, "")
+    .replace(DEADLINE_VERB_RE, "");
+  return left === "" ? due.date : null;
+}
+
+function stripDeadlineSegments(text: string): { rest: string; dueAt?: string } {
+  const chunks = text.split(/([，,；;。])/);
+  let dueAt: string | undefined;
+  const kept: string[] = [];
+  for (const chunk of chunks) {
+    if (/^[，,；;。]$/.test(chunk)) {
+      kept.push(chunk);
+      continue;
+    }
+    const due = deadlineSegment(chunk.trim());
+    if (due) {
+      dueAt = due;
+      continue;
+    }
+    kept.push(chunk);
+  }
+  return { rest: kept.join("").replace(/[，,；;。]{2,}/g, "，"), dueAt };
+}
+
 function extractAttributes(text: string): { rest: string; attrs: Attributes } {
   let rest = text;
   const attrs: Attributes = {};
+
+  const stripped = stripDeadlineSegments(rest);
+  if (stripped.dueAt) attrs.dueAt = stripped.dueAt;
+  rest = stripped.rest;
 
   const priority = rest.match(/(高|中|低)优先级|优先级(高|中|低)|(?:标成|设成|定为)(高|中|低)/);
   if (priority) {
@@ -197,7 +236,8 @@ function extractAttributes(text: string): { rest: string; attrs: Attributes } {
 
   const due = parseDueDate(rest);
   if (due) {
-    attrs.dueAt = due.date;
+    // 「今天内完成」已经给出过截止日，正文里的日期不再覆盖它
+    attrs.dueAt ??= due.date;
     rest = rest.replace(due.matched, "");
   }
 

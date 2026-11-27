@@ -1,8 +1,10 @@
 import type { ChatMessage } from "../../shared/chat.ts";
 import type { Task } from "../task-store.ts";
 
-const DETAIL_MARKER = "补充细节吗";
-const PROMPT_RE = /给「(.+?)」补充细节吗/;
+// 追问语里必须带这个标记，下一轮才认得出「这句是在回答备注」。
+// 兼容旧文案「补充细节吗」，避免升级前留下的对话被当成另一件事。
+const DETAIL_MARKERS = ["备注说明", "补充细节吗"];
+const PROMPT_RE = /给「(.+?)」(?:备注说明|补充细节吗)/;
 const NO_DETAIL_RE =
   /^(?:没有|不用|不要|不需要|不必|算了|就这些|没了|无|不补充|不用补充|ok|OK|好的|好)[。！!,.，\s]*$/;
 
@@ -19,18 +21,18 @@ export type DetailAnswer =
   | { kind: "other"; text: string }; // 没说要补充 —— 按另一件事处理
 
 export function detailPrompt(title: string): string {
-  return `\n\n需要给「${title}」补充细节吗？比如时间、地点、品牌或备注。不需要就说「没有」。`;
+  return `\n\n需要给「${title}」备注说明吗？`;
 }
 
-// 追问内容缺失时的追问语，带同样的标记，保证下一轮仍能认出是在等细节
+// 追问内容缺失时的追问语，带同样的标记，保证下一轮仍能认出是在等备注
 export function detailContentPrompt(title: string): string {
-  return `好，要给「${title}」补充细节吗？直接说内容就行，比如「三元的两瓶」。`;
+  return `好，要给「${title}」备注说明什么？直接说内容就行。`;
 }
 
 export function pendingDetailTask(messages: ChatMessage[], tasks: Task[]): Task | undefined {
   const previous = messages.at(-2);
   if (!previous || previous.role !== "assistant") return undefined;
-  if (!previous.content.includes(DETAIL_MARKER)) return undefined;
+  if (!DETAIL_MARKERS.some((marker) => previous.content.includes(marker))) return undefined;
 
   const matched = previous.content.match(PROMPT_RE);
   if (!matched) return undefined;

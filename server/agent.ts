@@ -57,7 +57,7 @@ function writeDetail(text: string, task: Task, tasks: TaskStore): string {
   executeActions(tasks, [{ type: "setAttrs", id: task.id, fields }]);
   const summary =
     typeof fields.detail === "string"
-      ? `已为「${task.title}」补充：${fields.detail}`
+      ? `已为「${task.title}」记下备注：${fields.detail}`
       : `已更新「${task.title}」的属性`;
   return `${summary}\n\n${listBlock(tasks)}`;
 }

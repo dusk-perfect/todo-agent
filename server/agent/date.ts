@@ -90,14 +90,14 @@ export function parseDueDate(text: string): DueMatch | null {
   return null;
 }
 
-export function dayName(date: string): string {
-  if (date === daysFromToday(0)) return "今天";
-  if (date === daysFromToday(1)) return "明天";
-  if (date === daysFromToday(2)) return "后天";
-  const matched = date.match(/^\d{4}-(\d{2})-(\d{2})$/);
-  return matched ? `${Number(matched[1])}月${Number(matched[2])}日` : date;
+// 日期只写数字，跨年才带年份
+export function shortDate(date: string): string {
+  const matched = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!matched) return date;
+  return Number(matched[1]) === new Date().getFullYear() ? `${matched[2]}-${matched[3]}` : date;
 }
 
-export function dueLabel(date: string): string {
-  return `${dayName(date)}到期`;
+// 期限统一说成「11-28 内完成」：日期在前，不同日期的待办一眼分得清
+export function dueBadge(date: string): string {
+  return `${shortDate(date)} 内完成`;
 }

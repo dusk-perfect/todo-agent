@@ -230,6 +230,28 @@ function mdParagraphs(md) {
   }
 }
 
+// ── 8. 邮件正文要素齐全 ──────────────────────────────────────────────
+{
+  const mailPath = resolve(ROOT, "..", "SUBMIT.邮件版.md");
+  if (!existsSync(mailPath)) {
+    check("邮件正文要素齐全", false, "找不到 SUBMIT.邮件版.md");
+  } else {
+    const mail = readFileSync(mailPath, "utf8");
+    const need = [
+      ["仓库链接", /github\.com\/dusk-perfect\/todo-agent/],
+      ["收件人", /hr@tokenow\.com\.cn/],
+      ["附件清单", /submit\.docx/],
+      ["运行方式", /npm ci/],
+    ];
+    const missing = need.filter(([, pattern]) => !pattern.test(mail)).map(([name]) => name);
+    check(
+      "邮件正文要素齐全",
+      missing.length === 0,
+      missing.length ? `缺：${missing.join("、")}` : `${need.length} 项齐全`,
+    );
+  }
+}
+
 // ── 汇总 ──────────────────────────────────────────────────────────────
 const failed = results.filter((r) => !r.ok);
 console.log(

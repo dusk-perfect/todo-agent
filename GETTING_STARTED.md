@@ -90,7 +90,7 @@ curl -sS http://127.0.0.1:3000/api/tasks
 curl -sS http://127.0.0.1:3000/api/reminders
 ```
 
-取回某次会话的历史（`sid` 为会话 id）：
+取回某次会话的历史（`sessionId` 为会话 id）：
 
 ```sh
 curl -sS http://127.0.0.1:3000/api/conversations/s-demo-session-1

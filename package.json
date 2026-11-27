@@ -10,6 +10,8 @@
     "start": "node --env-file-if-exists=.env server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test server/*.test.ts",
+    "docs:code": "node scripts/build-code-doc.mjs",
+    "check:sync": "node scripts/check-sync.mjs",
     "fmt": "oxfmt --write .",
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint .",

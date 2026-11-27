@@ -1,1 +1,3 @@
-{ "ignorePatterns": ["dist/**", "package-lock.json"] }
+{
+  "ignorePatterns": ["dist/**", "package-lock.json", "docs/构建代码汇总.md"]
+}

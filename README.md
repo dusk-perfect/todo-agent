@@ -100,16 +100,16 @@ npm run dev
 
 ### 接口一览
 
-| 方法   | 路径                       | 说明                           |
-| ------ | -------------------------- | ------------------------------ |
-| POST   | `/api/chat`                | 发送对话历史，返回本轮回复     |
-| GET    | `/api/tasks`               | 列出任务                       |
-| POST   | `/api/tasks`               | 新建任务（只收 `title`）       |
-| PATCH  | `/api/tasks/{id}`          | 改标题或完成状态               |
-| DELETE | `/api/tasks/{id}`          | 删除任务                       |
-| GET    | `/api/reminders`           | 已过期、今天、一小时内三类提醒 |
-| GET    | `/api/conversations/{sid}` | 取回某次会话的最近若干轮       |
-| DELETE | `/api/conversations/{sid}` | 清空某次会话                   |
+| 方法   | 路径                             | 说明                           |
+| ------ | -------------------------------- | ------------------------------ |
+| POST   | `/api/chat`                      | 发送对话历史，返回本轮回复     |
+| GET    | `/api/tasks`                     | 列出任务                       |
+| POST   | `/api/tasks`                     | 新建任务（只收 `title`）       |
+| PATCH  | `/api/tasks/{id}`                | 改标题或完成状态               |
+| DELETE | `/api/tasks/{id}`                | 删除任务                       |
+| GET    | `/api/reminders`                 | 已过期、今天、一小时内三类提醒 |
+| GET    | `/api/conversations/{sessionId}` | 取回某次会话的最近若干轮       |
+| DELETE | `/api/conversations/{sessionId}` | 清空某次会话                   |
 
 带 `x-user-id` 的请求按该身份的清单处理，不带就落到默认单用户清单；带 `x-session-id` 的对话才会落盘。完整定义见 [server/openapi.yaml](server/openapi.yaml)。
 

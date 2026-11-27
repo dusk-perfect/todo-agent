@@ -118,8 +118,28 @@ test("创建时解析优先级、工作量和截止日期", async (t) => {
   assert.equal(task?.dueAt, daysFromToday(1));
   assert.match(answer, /高优先级/);
   assert.match(answer, /大工作量/);
-  // 日期写在标题前面，纯数字，不同日期的待办一眼分得清
-  assert.match(answer, new RegExp(`\\[${daysFromToday(1).slice(5)} 内完成\\] 写季度报告`));
+  // 日期作为分组标题出现，纯数字，写在任务前面
+  assert.match(answer, new RegExp(`${daysFromToday(1).slice(5)} 内完成（1 项）`));
+  assert.match(answer, /☐ 1\. 写季度报告/);
+});
+
+test("同一天的任务合并成一组，日期只写一次", async (t) => {
+  const { say } = await startConversation(t);
+  await say("帮我记一下交报表，今天到期");
+  await say("没有");
+  await say("帮我记一下交水电费，今天到期");
+  await say("没有");
+  await say("帮我记一下取快递，明天到期");
+  await say("没有");
+
+  const answer = await say("我有哪些任务？");
+  const today = daysFromToday(0).slice(5);
+  const tomorrow = daysFromToday(1).slice(5);
+
+  assert.match(answer, new RegExp(`${today} 内完成（2 项）\\n☐ 1\\. 交报表\\n☐ 2\\. 交水电费`));
+  assert.match(answer, new RegExp(`${tomorrow} 内完成（1 项）\\n☐ 3\\. 取快递`));
+  // 日期只出现在组标题里，不会每行重复一遍
+  assert.equal(answer.match(/内完成（/g)?.length, 2);
 });
 
 test("「今天内完成」是截止说明，不会被拆成第二条任务", async (t) => {
@@ -140,6 +160,71 @@ test("「明天之前搞定」同样只算截止时间", async (t) => {
     ["陪小东打电话"],
   );
   assert.equal(store.list()[0]?.dueAt, daysFromToday(1));
+});
+
+test("没提日期时默认当天完成", async (t) => {
+  const { store, say } = await startConversation(t);
+  const answer = await say("帮我记一下买牛奶");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(0));
+  assert.match(answer, new RegExp(`${daysFromToday(0).slice(5)} 内完成`));
+});
+
+test("刚说过别的日期，接着记没日期的任务会先问哪天", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下交报表，明天内完成");
+  await say("没有");
+
+  const asked = await say("再记一条取快递");
+  assert.equal(store.list().length, 2);
+  assert.equal(store.list()[1]?.dueAt, undefined);
+  assert.match(asked, /「取快递」哪天完成/);
+
+  const answered = await say("后天");
+  assert.equal(store.list()[1]?.dueAt, daysFromToday(2));
+  assert.match(answered, new RegExp(`${daysFromToday(2).slice(5)} 内完成`));
+});
+
+test("被问哪天时回「就今天」按当天记", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下交报表，明天内完成");
+  await say("没有");
+  await say("再记一条取快递");
+
+  await say("就今天");
+  assert.equal(store.list()[1]?.dueAt, daysFromToday(0));
+});
+
+test("追问时补「明天内完成」只算日期，备注里不留截止说法", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+
+  const answered = await say("要三元的纯牛奶，明天内完成");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(1));
+  assert.equal(store.list()[0]?.detail, "三元的纯牛奶");
+  assert.doesNotMatch(answered, /三元的纯牛奶，内完成/);
+});
+
+test("说的时间点留在标题里，不跟着日期一起消失", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("明天上午十点要去医院拿体检报告");
+  assert.equal(store.list()[0]?.title, "上午十点去医院拿体检报告");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(1));
+
+  await say("没有");
+  await say("这周五下午三点和小东开会");
+  const meeting = store.list().find((task) => task.title.includes("小东"));
+  assert.equal(meeting?.title, "下午三点和小东开会");
+  assert.equal(meeting?.dueAt, daysFromToday(0));
+});
+
+test("只有时间没有助动词的口语也建任务，带疑问词的则不建", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("下午三点开会");
+  assert.equal(store.list()[0]?.title, "下午三点开会");
+
+  await say("没有");
+  await say("下午三点开会吗");
+  assert.equal(store.list().length, 1);
 });
 
 test("修改已有任务的属性", async (t) => {
@@ -302,7 +387,7 @@ test("追问中用户说的是另一件事（没有说要补充）时新建任�
   const tasks = store.list();
   assert.equal(tasks.length, 2);
   assert.equal(tasks.find((task) => task.title === "买书")?.detail, undefined);
-  assert.ok(tasks.some((task) => task.title === "取快递"));
+  assert.ok(tasks.some((task) => task.title === "去取快递"));
   assert.match(answered, /另一件事/);
   assert.match(answered, /买书/);
 });
@@ -330,8 +415,8 @@ test("陈述式说法能建任务，不依赖具体是哪件事", async (t) => {
   const { store, say } = await startConversation(t);
   const cases: [string, string][] = [
     ["这周末要给车做保养", "给车做保养"],
-    ["晚上还得遛狗", "遛狗"],
-    ["我下周要去银行办卡", "银行办卡"],
+    ["晚上还得遛狗", "晚上遛狗"],
+    ["我下周要去银行办卡", "去银行办卡"],
     ["我得交房租了", "交房租"],
     ["我明天得准备面试材料", "准备面试材料"],
   ];

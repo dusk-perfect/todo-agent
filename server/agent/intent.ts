@@ -23,8 +23,17 @@ const CREATE_PATTERNS = [
 // 而是剥掉「主语 + 时间 + 意愿词 + 去」这些封闭的前缀，剩下的就是事情本身。
 // 任务内容可以是任意说法，只要前缀被削掉就能拿到标题。
 const SUBJECT_PREFIX_RE = /^(?:我|俺|咱)(?:们)?/;
-const TIME_PREFIX_RE =
-  /^(?:(?:[0-9]{1,2}|[一二三四五六七八九十]{1,3})(?:点|点钟|时)(?:半|[0-9]{1,2}分)?|现在|今天|明天|后天|大后天|今晚|明早|明晚|马上|立刻|待会(?:儿)?|等会(?:儿)?|一会儿|晚点|回头|下午|上午|晚上|早上|中午|(?:这|本|下|下下)?(?:周|星期)[一二三四五六日天末]|(?:这|本|下|下下)?(?:周|星期)|(?:这|本|下|下下)个?月(?:初|底|中)?|月初|月底|周末前)/;
+// 日期型前缀：已经写进 dueAt，标题里不用再重复一遍
+const DATE_PREFIX_RE =
+  /^(?:今天|今日|明天|明日|后天|大后天|今晚|明早|明晚|(?:这|本|下|下下)?(?:周|星期)[一二三四五六日天末]|(?:这|本|下|下下)?(?:周|星期)|(?:这|本|下|下下)个?月(?:初|底|中)?|月初|月底|周末前)/;
+// 时刻型（十点、下午、晚上…）不剥：dueAt 只精确到天，剥掉就真丢了。
+// 「现在/马上」这类说的是当下，不是任务信息，剥掉。
+const INSTANT_PREFIX_RE = /^(?:现在|马上|立刻|待会(?:儿)?|等会(?:儿)?|一会儿|晚点|回头)/;
+// 具体时刻：摘出来放回标题，不能跟日期一起被削掉
+const CLOCK_PREFIX_RE =
+  /^(?:(?:[0-9]{1,2}|[一二三四五六七八九十]{1,3})(?:点|点钟|时)(?:半|[0-9]{1,2}分)?|上午|下午|中午|晚上|早上|凌晨|清晨|傍晚)/;
+// 带这些词的多半是在问（「下午三点开会吗」），别当成待办
+const QUESTION_TAIL_RE = /[吗呢]\s*$|(?:怎么|什么|啥|哪些|哪个|谁|多少|几点|几号)/;
 // 助动词和「准备/打算」要分开：「我要准备面试」里的准备才是事情本身，
 // 「我准备预约体检」里的准备只是意愿，早了会削掉真正的动作。
 const AUX_PREFIX_RE = /^(?:还)?(?:要|得|需要|必须|应该|想)/;
@@ -32,7 +41,8 @@ const PLAN_PREFIX_RE = /^(?:准备|打算|计划)/;
 const ADV_PREFIX_RE = /^(?:先|再|赶紧|尽快|抓紧|顺手|就)/;
 // 「这周五之前要…」「月底前得…」里的「之前/以前」是时间后缀，不是事情本身
 const DEADLINE_SUFFIX_RE = /^(?:之前|以前|前|之内|以内)/;
-const GO_PREFIX_RE = /^(?:去|来)(?:一趟|一下|一回|趟|个)?/;
+// 「去/来」不剥：「去医院拿体检报告」比「医院拿体检报告」自然，
+// 「去取快递」也只是多一个字，比切出病句划算。
 
 const DELETE_RE = /(删掉|删除|去掉|移除|清掉|不要了|取消掉|撤掉|删了)/;
 const COMPLETE_RE = /(好了|完成了|做完|搞定|弄好|办完|结束了)/;
@@ -114,7 +124,8 @@ function cleanTitle(raw: string): string {
     .trim();
 }
 
-function splitTitles(raw: string): string[] {
+// 陈述句里的「和」多半是介词（「和小东开会」），不是并列，硬拆会把一句话劈成半句
+function splitTitles(raw: string, allowAnd = true): string[] {
   const text = raw.trim();
   if (!text) return [];
 
@@ -126,23 +137,34 @@ function splitTitles(raw: string): string[] {
     return title ? [title] : [];
   }
 
+  const separator = allowAnd
+    ? /\s*(?:和|以及|、|,|，|;|；|然后|还有|顺便)\s*/
+    : /\s*(?:以及|、|,|，|;|；|然后|还有|顺便)\s*/;
   return text
-    .split(/\s*(?:和|以及|、|,|，|;|；|然后|还有|顺便)\s*/)
+    .split(separator)
     .map(cleanTitle)
     .filter((title) => title.length > 0);
 }
 
-// 「我现在要去取快递」→ 取快递；「这周末要给车做保养」→ 给车做保养。
+// 「我现在要去取快递」→ 去取快递；「这周末要给车做保养」→ 给车做保养。
 // 必须削掉过意愿词（要/得/需要/准备…）才算陈述式任务，否则「今天天气怎么样」也会被当成任务。
+// 时刻（下午三点、上午十点）不能削：dueAt 只到天，削掉就真丢了，先摘出来最后拼回标题。
 function statementTitle(message: string): string | null {
   let rest = message.trim();
   const subject = rest.match(SUBJECT_PREFIX_RE);
   if (subject) rest = rest.slice(subject[0].length);
 
   let sawModal = false;
+  let clock = "";
   for (;;) {
     const before = rest;
-    rest = rest.replace(TIME_PREFIX_RE, "");
+    const clockMatch = rest.match(CLOCK_PREFIX_RE);
+    if (clockMatch) {
+      clock += clockMatch[0];
+      rest = rest.slice(clockMatch[0].length);
+    }
+    rest = rest.replace(DATE_PREFIX_RE, "");
+    rest = rest.replace(INSTANT_PREFIX_RE, "");
 
     const aux = rest.match(AUX_PREFIX_RE);
     if (aux) {
@@ -159,16 +181,18 @@ function statementTitle(message: string): string | null {
 
     rest = rest.replace(DEADLINE_SUFFIX_RE, "");
     rest = rest.replace(ADV_PREFIX_RE, "");
-    rest = rest.replace(GO_PREFIX_RE, "");
     if (rest === before) break;
   }
 
-  if (!sawModal) return null;
   rest = rest
     .replace(/^[，,、：:\s]+/, "")
     .replace(/[，,、：:。.]+$/, "")
     .replace(/(?:了|啦)+$/, "");
-  return rest.length >= 2 ? rest : null;
+
+  // 「下午三点和小东开会」这种省了助动词的口语：有时刻、剩的是事情、又不带疑问词，也算一件事
+  const looksLikeTask = clock !== "" && rest.length >= 2 && !QUESTION_TAIL_RE.test(rest);
+  if (!sawModal && !looksLikeTask) return null;
+  return rest.length >= 2 ? `${clock}${rest}` : null;
 }
 
 interface Attributes extends Record<string, unknown> {
@@ -193,7 +217,7 @@ function deadlineSegment(segment: string): string | null {
   return left === "" ? due.date : null;
 }
 
-function stripDeadlineSegments(text: string): { rest: string; dueAt?: string } {
+export function stripDeadlineSegments(text: string): { rest: string; dueAt?: string } {
   const chunks = text.split(/([，,；;。])/);
   let dueAt: string | undefined;
   const kept: string[] = [];
@@ -379,7 +403,7 @@ export function parseRuleActions(text: string, tasks: Task[]): Action[] | null {
   if (statement && !isCompoundStatement(message)) {
     const { rest, attrs } = extractAttributes(statement);
     const due = parseDueDate(rest) ?? parseDueDate(message);
-    const titles = splitTitles(rest);
+    const titles = splitTitles(rest, false);
     if (titles.length > 0 && titles.every((title) => title.length <= 200)) {
       return titles.map((title) => ({
         type: "create",
@@ -403,6 +427,6 @@ export function parseLongStatementTitle(message: string): string | null {
   const statement = statementTitle(message);
   if (!statement) return null;
   const { rest } = extractAttributes(statement);
-  const titles = splitTitles(rest);
+  const titles = splitTitles(rest, false);
   return titles[0] ?? null;
 }

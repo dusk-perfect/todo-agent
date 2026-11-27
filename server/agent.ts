@@ -1,16 +1,19 @@
 import type { ChatMessage } from "../shared/chat.ts";
 import type { Task, TaskStore } from "./task-store.ts";
 import { executeActions, type Action } from "./agent/actions.ts";
-import { parseDueDate } from "./agent/date.ts";
+import { daysFromToday, dueBadge, parseDueDate } from "./agent/date.ts";
 import {
   detailContentPrompt,
   detailPrompt,
+  duePrompt,
   parseDetailAnswer,
+  parseDueAnswer,
   pendingDetailTask,
+  pendingDueTask,
 } from "./agent/followup.ts";
 import { calendarNote } from "./agent/calendar.ts";
 import { formatResults } from "./agent/format.ts";
-import { parseRuleActions, parseLongStatementTitle, FALLBACK_QUESTION } from "./agent/intent.ts";
+import { parseRuleActions, parseLongStatementTitle, stripDeadlineSegments, FALLBACK_QUESTION } from "./agent/intent.ts";
 import { planWithLLM } from "./agent/llm.ts";
 
 export type { ChatMessage } from "../shared/chat.ts";
@@ -22,7 +25,10 @@ function listBlock(tasks: TaskStore): string {
 // 把用户明确要补充的那句写进上一条任务：属性拆出来，剩下的记成 detail。
 function writeDetail(text: string, task: Task, tasks: TaskStore): string {
   const fields: Record<string, unknown> = {};
-  let remainder = text.trim();
+  // 「明天内完成」这种截止说法整段算日期，别留在备注里
+  const stripped = stripDeadlineSegments(text.trim());
+  if (stripped.dueAt) fields.dueAt = stripped.dueAt;
+  let remainder = stripped.rest;
 
   const priority = remainder.match(/(高|中|低)优先级/);
   if (priority) {
@@ -38,7 +44,7 @@ function writeDetail(text: string, task: Task, tasks: TaskStore): string {
 
   const due = parseDueDate(remainder);
   if (due) {
-    fields.dueAt = due.date;
+    fields.dueAt ??= due.date;
     remainder = remainder.replace(due.matched, "");
   }
 
@@ -83,6 +89,22 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     if (answer.kind === "ask") return detailContentPrompt(pending.title);
   }
 
+  // 上一轮刚问过「哪天完成」：这一句先说日期，就补到那条任务上
+  const duePending = pendingDueTask(messages, snapshot);
+  if (duePending) {
+    const answer = parseDueAnswer(latest.content);
+    const date =
+      answer.kind === "date" ? answer.date : answer.kind === "today" ? daysFromToday(0) : null;
+    if (date) {
+      executeActions(tasks, [{ type: "setAttrs", id: duePending.id, fields: { dueAt: date } }]);
+      return `「${duePending.title}」记到 ${dueBadge(date)}。\n\n${listBlock(tasks)}`;
+    }
+    // 说的是别的事：这条先按当天算，再照常处理这句话
+    executeActions(tasks, [
+      { type: "setAttrs", id: duePending.id, fields: { dueAt: daysFromToday(0) } },
+    ]);
+  }
+
   let actions: Action[] | null = ruleActions;
   if (!actions) actions = await planWithLLM(latest.content, snapshot);
 
@@ -96,6 +118,27 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
   }
   if (!actions) actions = [{ type: "ask", question: FALLBACK_QUESTION }];
 
+  // 没提日期默认当天；但刚说过别的日期、这句又没说，就先问清楚，别默认错
+  const createCount = actions.filter((action) => action.type === "create").length;
+  const messageDue = parseDueDate(latest.content)?.date ?? null;
+  const inherited = lastMentionedDate(messages);
+  const today = daysFromToday(0);
+  let askDueTitle: string | null = null;
+
+  actions = actions.map((action) => {
+    if (action.type !== "create") return action;
+    const fields = action.fields ?? {};
+    if (typeof fields.dueAt === "string") return action;
+    // 这句话里说过的日期对句中每条任务都算数：
+    // 「下周三之前把复盘写完，然后发给张老师」两条都该落在下周三
+    if (messageDue) return { ...action, fields: { ...fields, dueAt: messageDue } };
+    if (createCount === 1 && inherited && inherited !== today) {
+      askDueTitle = action.title;
+      return action;
+    }
+    return { ...action, fields: { ...fields, dueAt: today } };
+  });
+
   const results = executeActions(tasks, actions);
   const created = results.filter((result) => result.action.type === "create" && result.task);
   // 新任务如果落在有日程的日子上，顺手提醒一句，免得排重了
@@ -106,9 +149,14 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     .filter(Boolean)
     .join("");
   const answer = formatResults(results, tasks.list()) + busyNote;
+  const asked = results.some((result) => result.action.type === "ask");
 
   if (created.length === 1) {
     const title = created[0].task?.title;
+    // 日期还没定：先问哪天，别紧接着又追问备注，一次只问一件事
+    if (title && askDueTitle) return answer + duePrompt(title);
+    // 已经有一个反问在等用户回答，别再叠一个追问
+    if (title && asked) return answer;
     // 追问被打断时说明一句，免得用户以为刚才那条被改了
     if (title && pending) {
       return (
@@ -122,6 +170,22 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
 }
 
 const QUESTION_RE = /[？?]\s*$|^(?:为什么|怎么|多少|几点|什么|谁|哪里|哪个|是不是|能不能)/;
+
+// 最近几轮用户提过的日期。用来判断「接着说的这条」是不是该问清楚哪天：
+// 上一条说的是明天，下一条不吭声就记成今天，多半是记错了。
+function lastMentionedDate(messages: ChatMessage[]): string | null {
+  const history = messages.slice(0, -1);
+  let seen = 0;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (!message || message.role !== "user") continue;
+    seen += 1;
+    if (seen > 4) break;
+    const due = parseDueDate(message.content);
+    if (due) return due.date;
+  }
+  return null;
+}
 
 function isQuestion(text: string): boolean {
   return QUESTION_RE.test(text.trim());

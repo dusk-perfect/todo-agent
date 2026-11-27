@@ -19,24 +19,64 @@ function tagText(task: Task): string {
   return tags.length > 0 ? ` [${tags.join(" · ")}]` : "";
 }
 
-// 日期放在标题前面，不同日期的待办在清单里一眼分得开
-function dateBadge(task: Task): string {
-  return typeof task.dueAt === "string" ? `[${dueBadge(task.dueAt)}] ` : "";
+function rowText(task: Task, index: number): string {
+  return `${task.done ? "☑" : "☐"} ${index + 1}. ${task.title}${tagText(task)}`;
 }
 
 function renderRows(tasks: Task[]): string {
-  return tasks
-    .map(
-      (task, index) =>
-        `${task.done ? "☑" : "☐"} ${index + 1}. ${dateBadge(task)}${task.title}${tagText(task)}`,
-    )
-    .join("\n");
+  return tasks.map((task, index) => rowText(task, index)).join("\n");
+}
+
+interface DayGroup {
+  date: string;
+  label: string;
+  tasks: Task[];
+}
+
+// 同一天的任务并到一组，日期只写一次，不逐条重复
+function groupByDay(tasks: Task[]): DayGroup[] {
+  const dated = new Map<string, Task[]>();
+  const undated: Task[] = [];
+  for (const task of tasks) {
+    if (typeof task.dueAt !== "string") {
+      undated.push(task);
+      continue;
+    }
+    const bucket = dated.get(task.dueAt) ?? [];
+    bucket.push(task);
+    dated.set(task.dueAt, bucket);
+  }
+
+  const groups = [...dated.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, items]) => ({ date, label: dueBadge(date), tasks: items }));
+  if (undated.length > 0) groups.push({ date: "", label: "未排期", tasks: undated });
+  return groups;
 }
 
 export function renderList(tasks: Task[]): string {
   if (tasks.length === 0) return "清单是空的，还没有待办。";
   const pending = tasks.filter((task) => !task.done).length;
-  return [`共 ${tasks.length} 项，其中 ${pending} 项待办：`, renderRows(tasks)].join("\n");
+  const header = `共 ${tasks.length} 项，其中 ${pending} 项待办：`;
+  const groups = groupByDay(tasks);
+
+  // 一条都没排期时不用多一个「未排期」标题
+  const only = groups[0];
+  if (groups.length === 1 && only && only.date === "") {
+    return [header, renderRows(only.tasks)].join("\n");
+  }
+
+  let seen = 0;
+  const blocks = groups.map((group) => {
+    const rows = group.tasks
+      .map((task) => {
+        seen += 1;
+        return rowText(task, seen - 1);
+      })
+      .join("\n");
+    return `${group.label}（${group.tasks.length} 项）\n${rows}`;
+  });
+  return [header, ...blocks].join("\n\n");
 }
 
 export function formatResults(results: ActionResult[], tasks: Task[]): string {

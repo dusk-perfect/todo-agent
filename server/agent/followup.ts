@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../../shared/chat.ts";
 import type { Task } from "../task-store.ts";
+import { parseDueDate } from "./date.ts";
 
 // 追问语里必须带这个标记，下一轮才认得出「这句是在回答备注」。
 // 兼容旧文案「补充细节吗」，避免升级前留下的对话被当成另一件事。
@@ -58,5 +59,49 @@ export function parseDetailAnswer(text: string): DetailAnswer {
 
   if (AGREE_BARE_RE.test(message)) return { kind: "ask" };
 
+  return { kind: "other", text: message };
+}
+
+// ---- 时间追问：任务先记下来，再问哪天完成 ----
+
+const DUE_MARKER = "哪天完成";
+const DUE_PROMPT_RE = /「(.+?)」哪天完成/;
+const DUE_NONE_RE = /^(?:不用|不用了|就今天|今天吧|没定|不确定|算了|没有|随便|都行)[。！!，,\s]*$/;
+
+export function duePrompt(title: string): string {
+  return `\n\n「${title}」哪天完成？`;
+}
+
+export function pendingDueTask(messages: ChatMessage[], tasks: Task[]): Task | undefined {
+  const previous = messages.at(-2);
+  if (!previous || previous.role !== "assistant") return undefined;
+  if (!previous.content.includes(DUE_MARKER)) return undefined;
+
+  const matched = previous.content.match(DUE_PROMPT_RE);
+  if (!matched) return undefined;
+
+  return [...tasks].reverse().find((task) => task.title === matched[1]);
+}
+
+export type DueAnswer =
+  | { kind: "date"; date: string } // 说清了哪天
+  | { kind: "today" } // 不打算挑日子，就按今天
+  | { kind: "other"; text: string }; // 说的是别的事
+
+export function parseDueAnswer(text: string): DueAnswer {
+  const message = text.trim();
+  const due = parseDueDate(message);
+  if (due) {
+    // 只有「整句就是在说日期」才算回答；「我明天得准备面试材料」是新任务
+    const left = message
+      .replace(due.matched, "")
+      .replace(/[，,。.！!？?；;、\s]/g, "")
+      .replace(/^(?:就|在|到|定在|改到|改成|设为|是)/, "")
+      .replace(/(?:完成|做完|搞定|办完|吧|了|呀|哈)$/, "")
+      .replace(/(?:之前|以前|内|以内|前|截止)$/, "");
+    if (left === "") return { kind: "date", date: due.date };
+    return { kind: "other", text: message };
+  }
+  if (DUE_NONE_RE.test(message)) return { kind: "today" };
   return { kind: "other", text: message };
 }

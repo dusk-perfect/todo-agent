@@ -9,6 +9,7 @@ export interface CalendarEvent {
 
 // 日历来源：优先环境变量指定的文件，其次 data/calendar.ics。
 // 用 .ics 而不是各家日历 API，是为了不依赖授权——用户从手机或电脑导出即可。
+// 没有这个文件就当作没有日历，不做任何提醒；格式示例见 examples/calendar.example.ics。
 const DEFAULT_PATHS = ["data/calendar.ics", "data/calendar.ical"];
 
 interface Cache {

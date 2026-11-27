@@ -227,6 +227,27 @@ test("只有时间没有助动词的口语也建任务，带疑问词的则不�
   assert.equal(store.list().length, 1);
 });
 
+test("「下午三点半和小东开会」里的「和」是介词，不拆成两条", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下今天下午三点半和小东开会");
+
+  assert.deepEqual(
+    store.list().map((task) => task.title),
+    ["下午三点半和小东开会"],
+  );
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(0));
+  assert.equal(store.list()[0]?.dueTime, "15:30");
+});
+
+test("「记一下买菜和取快递」仍然是两条", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("记一下买菜和取快递");
+  assert.deepEqual(
+    store.list().map((task) => task.title),
+    ["买菜", "取快递"],
+  );
+});
+
 test("修改已有任务的属性", async (t) => {
   const { store, say } = await startConversation(t);
   await say("记一下买牛奶");

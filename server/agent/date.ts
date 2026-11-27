@@ -101,3 +101,52 @@ export function shortDate(date: string): string {
 export function dueBadge(date: string): string {
   return `${shortDate(date)} 内完成`;
 }
+
+const CN_DIGIT: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10,
+};
+// 时段词把 12 小时制折算成 24 小时制；凌晨/早上/上午保持原值
+const NOON_PERIODS = new Set(["中午", "下午", "傍晚", "晚上"]);
+
+function toHour(raw: string): number | null {
+  if (/^\d{1,2}$/.test(raw)) return Number(raw);
+  if (raw === "十一") return 11;
+  if (raw === "十二") return 12;
+  return CN_DIGIT[raw] ?? null;
+}
+
+// 从原话里单独取出时刻，写进 dueTime，用来做提醒。
+// 标题里仍然保留「下午三点」，这里只是额外记一份结构化的时间。
+export function parseDueTime(text: string): { time: string; matched: string } | null {
+  const matched = text.match(
+    /(上午|早上|凌晨|中午|下午|傍晚|晚上)?\s*(\d{1,2}|[一二三四五六七八九十]{1,2})\s*[点时](半|\d{1,2}分)?/,
+  );
+  if (!matched?.[2]) return null;
+
+  const period = matched[1];
+  let hour = toHour(matched[2]);
+  if (hour === null) return null;
+
+  if (period && NOON_PERIODS.has(period) && hour < 12) hour += 12;
+  // 「三点开会」这种没有时段词的说法，口语里通常指下午，1-6 点按下午折算
+  if (!period && hour >= 1 && hour <= 6) hour += 12;
+  if (hour > 23) return null;
+
+  const suffix = matched[3];
+  const minute = suffix === "半" ? 30 : suffix ? Number(suffix.replace("分", "")) : 0;
+  if (!Number.isFinite(minute) || minute > 59) return null;
+
+  return {
+    time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+    matched: matched[0].trim(),
+  };
+}

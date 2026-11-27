@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "../shared/chat.ts";
 
-const examplePrompts = ["提醒我买牛奶", "看看我的待办"];
+const examplePrompts = ["帮我记一下买牛奶", "明天下午三点和小东开会", "我有哪些任务？"];
 
 interface ChatHistoryProps {
   messages: ChatMessage[];

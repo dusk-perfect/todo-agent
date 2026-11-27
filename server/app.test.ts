@@ -6,16 +6,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { ChatMessage } from "../shared/chat.ts";
+import { localDate } from "./agent/date.ts";
 import { createApp } from "./app.ts";
+import { createConversationStore } from "./conversations.ts";
 import { createJsonTaskStore } from "./task-store.ts";
+import { createUserStores } from "./users.ts";
 
-async function startTestApp(t: TestContext) {
+async function startTestApp(t: TestContext, options: { multiUser?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "todo-agent-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "tasks.json");
   const conversations: ChatMessage[][] = [];
+  const stores = options.multiUser ? createUserStores(directory) : null;
   const app = createApp({
     tasks: createJsonTaskStore(filename),
+    storeFor: stores ? (userId) => stores.tasks(userId) : undefined,
+    conversations: options.multiUser ? createConversationStore(directory) : undefined,
     async reply(messages) {
       conversations.push(messages);
       return "收到";
@@ -27,11 +33,16 @@ async function startTestApp(t: TestContext) {
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
 
-  async function request(method: string, path: string, body?: unknown) {
+  async function request(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, {
       method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json", ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     return {
       status: response.status,
@@ -95,4 +106,69 @@ test("聊天 API 只将有效的完整对话传给智能体，并返回其回复
   const invalid = await request("POST", "/api/chat", { messages: messages.slice(0, 2) });
   assert.equal(invalid.status, 400);
   assert.deepEqual(conversations, [messages]);
+});
+
+test("不同用户看到各自的清单，互不串数据", async (t) => {
+  const { request } = await startTestApp(t, { multiUser: true });
+  const alice = { "x-user-id": "alice" };
+  const bob = { "x-user-id": "bob" };
+
+  await request("POST", "/api/tasks", { title: "alice 的任务" }, alice);
+  assert.equal((await request("GET", "/api/tasks", undefined, alice)).body.length, 1);
+  assert.deepEqual((await request("GET", "/api/tasks", undefined, bob)).body, []);
+});
+
+test("对话按会话取回，重复提交不重复记，清空只清当前会话", async (t) => {
+  const { request } = await startTestApp(t, { multiUser: true });
+  const headers = { "x-user-id": "alice", "x-session-id": "session-0001" };
+
+  await request("POST", "/api/chat", { messages: [{ role: "user", content: "你好" }] }, headers);
+  const history = await request("GET", "/api/conversations/session-0001", undefined, headers);
+  assert.deepEqual(history.body.messages, [
+    { role: "user", content: "你好" },
+    { role: "assistant", content: "收到" },
+  ]);
+
+  // 刷新后继续聊：前端带完整历史，服务端只追加真正新增的那一条
+  await request(
+    "POST",
+    "/api/chat",
+    {
+      messages: [
+        { role: "user", content: "你好" },
+        { role: "assistant", content: "收到" },
+        { role: "user", content: "我有哪些任务？" },
+      ],
+    },
+    headers,
+  );
+  const grown = await request("GET", "/api/conversations/session-0001", undefined, headers);
+  assert.equal(grown.body.messages.length, 4);
+
+  await request("DELETE", "/api/conversations/session-0001", undefined, headers);
+  const cleared = await request("GET", "/api/conversations/session-0001", undefined, headers);
+  assert.deepEqual(cleared.body.messages, []);
+});
+
+test("提醒接口把过期的和今天的分开返回", async (t) => {
+  const { request, filename } = await startTestApp(t);
+  await writeFile(
+    filename,
+    JSON.stringify([
+      { id: "a", title: "过期", done: false, dueAt: "2020-01-01" },
+      { id: "b", title: "今天", done: false, dueAt: localDate(new Date()) },
+      { id: "c", title: "做完了", done: true, dueAt: "2020-01-01" },
+    ]),
+  );
+
+  const reminders = await request("GET", "/api/reminders");
+  assert.equal(reminders.status, 200);
+  assert.deepEqual(
+    reminders.body.overdue.map((task: { id: string }) => task.id),
+    ["a"],
+  );
+  assert.deepEqual(
+    reminders.body.today.map((task: { id: string }) => task.id),
+    ["b"],
+  );
 });

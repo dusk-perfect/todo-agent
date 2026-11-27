@@ -1,6 +1,6 @@
 import type { Task } from "../task-store.ts";
 import type { Action } from "./actions.ts";
-import { daysFromToday, parseDueDate } from "./date.ts";
+import { daysFromToday, parseDueDate, parseDueTime } from "./date.ts";
 
 const CREATE_PATTERNS = [
   /帮我记一下(.+)/,
@@ -124,10 +124,30 @@ function cleanTitle(raw: string): string {
     .trim();
 }
 
+// 只有时间的片段：「下午三点半」「明天」「周五」，本身不是一件事
+function isTimeOnly(text: string): boolean {
+  let left = text.trim();
+  for (;;) {
+    const before = left;
+    left = left.replace(DATE_PREFIX_RE, "").replace(CLOCK_PREFIX_RE, "");
+    if (left === before) break;
+  }
+  return left.replace(/[，,、：:\s]/g, "") === "";
+}
+
 // 陈述句里的「和」多半是介词（「和小东开会」），不是并列，硬拆会把一句话劈成半句
 function splitTitles(raw: string, allowAnd = true): string[] {
   const text = raw.trim();
   if (!text) return [];
+
+  // 「下午三点半和小东开会」：切开一侧只剩时间，说明「和」后面才是事情，别拆
+  if (allowAnd) {
+    const aroundAnd = text.split(/\s*和\s*/);
+    if (aroundAnd.length > 1 && aroundAnd.some(isTimeOnly)) {
+      const title = cleanTitle(text);
+      return title ? [title] : [];
+    }
+  }
 
   // 长句不按标点硬拆：拆错的代价（好几条垃圾任务）比不拆大。
   // 短句才按「和/、/再/然后」拆成多条。
@@ -199,6 +219,7 @@ interface Attributes extends Record<string, unknown> {
   priority?: string;
   estimate?: string;
   dueAt?: string;
+  dueTime?: string;
 }
 
 // 「今天内完成」「明天之前搞定」是整句的截止说明，不是第二件事。
@@ -264,6 +285,10 @@ function extractAttributes(text: string): { rest: string; attrs: Attributes } {
     attrs.dueAt ??= due.date;
     rest = rest.replace(due.matched, "");
   }
+
+  // 时刻单独记一份给提醒用，但不从标题里删——标题留着「下午三点」才看得懂
+  const clock = parseDueTime(rest);
+  if (clock) attrs.dueTime = clock.time;
 
   rest = rest.replace(/(?:到期|截止|之前)/g, "");
   return { rest, attrs };

@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../shared/chat.ts";
 import type { Task, TaskStore } from "./task-store.ts";
 import { executeActions, type Action } from "./agent/actions.ts";
-import { daysFromToday, dueBadge, parseDueDate } from "./agent/date.ts";
+import { daysFromToday, dueBadge, parseDueDate, parseDueTime } from "./agent/date.ts";
 import {
   detailContentPrompt,
   detailPrompt,
@@ -13,7 +13,12 @@ import {
 } from "./agent/followup.ts";
 import { calendarNote } from "./agent/calendar.ts";
 import { formatResults } from "./agent/format.ts";
-import { parseRuleActions, parseLongStatementTitle, stripDeadlineSegments, FALLBACK_QUESTION } from "./agent/intent.ts";
+import {
+  parseRuleActions,
+  parseLongStatementTitle,
+  stripDeadlineSegments,
+  FALLBACK_QUESTION,
+} from "./agent/intent.ts";
 import { planWithLLM } from "./agent/llm.ts";
 
 export type { ChatMessage } from "../shared/chat.ts";
@@ -47,6 +52,10 @@ function writeDetail(text: string, task: Task, tasks: TaskStore): string {
     fields.dueAt ??= due.date;
     remainder = remainder.replace(due.matched, "");
   }
+
+  // 补的时刻也记进 dueTime，备注原文不动，免得用户看不到自己说的时间
+  const clock = parseDueTime(remainder);
+  if (clock) fields.dueTime = clock.time;
 
   remainder = remainder.replace(/(?:到期|截止)/g, "").replace(/^[，,、\s]+|[，,、\s]+$/g, "");
   if (remainder) {

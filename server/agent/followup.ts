@@ -50,6 +50,8 @@ export function isNoDetailAnswer(text: string): boolean {
 export function parseDetailAnswer(text: string): DetailAnswer {
   const message = text.trim();
   if (NO_DETAIL_RE.test(message)) return { kind: "none" };
+  // 「就是今天啊」「今天就这样」：不是在补充细节，是这件事没有别的信息
+  if (todayAnswer(message)) return { kind: "none" };
 
   const then = message.match(AGREE_THEN_RE);
   if (then?.[1]) return { kind: "agree", text: then[1].trim() };
@@ -91,7 +93,7 @@ export type DueAnswer =
 // 把日期词、时段词、钟点从一句里摘干净，剩下的才是「事情」。
 // 剩下为空，说明这句就是在交代时间，不是另一件事。
 const TIME_WORD_RE =
-  /(?:\d{1,2}|[一二三四五六七八九十]{1,2})\s*[点时](?:半|\d{1,2}分)?|凌晨|清晨|早晨|早上|上午|中午|午后|下午|傍晚|晚上|夜里|今晚|今早|今夜|明早|明晚|明夜|今天|今日|明天|明日|后天|大后天|周末|(?:这|本|下|下下)?(?:周|星期)[一二三四五六日天]?|(?:这|本|下|下下)个?月(?:初|底|末|中)?|(?:本|这个)?月[底末初]/g;
+  /(?:\d{1,2}|[一二三四五六七八九十]{1,2})\s*[点时](?:半|\d{1,2}分)?|凌晨|清晨|早晨|早上|上午|中午|午后|下午|傍晚|晚上|夜里|今晚|今早|今夜|明早|明晚|明夜|今天|今日|明天|明日|后天|大后天|周末|(?:这|本|下|下下)?(?:周|星期)[一二三四五六日天]?|(?:这|本|下|下下)个?月(?:初|底|末|中)?|(?:本|这个)?月[底末初]|现在|马上|立刻|等下|待会|待会儿|一会儿|晚点|稍后/g;
 
 function timeOnlyRest(message: string): string {
   return message
@@ -102,9 +104,28 @@ function timeOnlyRest(message: string): string {
     .replace(/(?:之前|以前|内|以内|前|截止)$/, "");
 }
 
+// 「就是今天啊」「等下肯定也是今天」这类回答：整句都在强调日期。
+// 剥掉当下词、句首的强调词和句尾的语气词后，剩下的还是不是「今天」这一类说法。
+const ANSWER_FILLER_RE = /^(?:那|就|也是|是|都|肯定|当然|其实|反正|要|得|应该)+/;
+
+function todayAnswer(message: string): boolean {
+  let core = message.replace(/现在|马上|立刻|等下|待会|待会儿|一会儿|晚点|稍后/g, "").trim();
+  for (;;) {
+    const before = core;
+    core = core.replace(ANSWER_FILLER_RE, "");
+    core = core.replace(/[啊呀吧呢哦哈呗了啦嘛]+$/, "");
+    core = core.trim();
+    if (core === before) break;
+  }
+  return /^(?:今天|今日|当天|今儿)(?:晚上|早上|上午|下午|中午|夜里|凌晨)?(?:之内|以内|内)?(?:完成|做完|搞定|办完|结束)?$/.test(
+    core,
+  );
+}
+
 export function parseDueAnswer(text: string): DueAnswer {
   const message = text.trim();
   if (DUE_NONE_RE.test(message)) return { kind: "today" };
+  if (todayAnswer(message)) return { kind: "today" };
 
   const day = statedDay(message);
   if (day) {

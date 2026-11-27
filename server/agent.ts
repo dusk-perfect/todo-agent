@@ -1,11 +1,19 @@
 import type { ChatMessage } from "../shared/chat.ts";
 import type { Task, TaskStore } from "./task-store.ts";
 import { executeActions, type Action } from "./agent/actions.ts";
-import { daysFromToday, dueBadge, parseDueDate, parseDueTime, statedDay } from "./agent/date.ts";
+import {
+  dayLabel,
+  daysFromToday,
+  dueBadge,
+  parseDueDate,
+  parseDueTime,
+  statedDay,
+} from "./agent/date.ts";
 import {
   detailContentPrompt,
   detailPrompt,
   duePrompt,
+  isNoDetailAnswer,
   parseDetailAnswer,
   parseDueAnswer,
   pendingDetailTask,
@@ -119,6 +127,22 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
 
   let actions: Action[] | null = ruleActions;
   if (!actions) actions = await planWithLLM(latest.content, snapshot);
+
+  // 没有待追问的时候回一句「没有」「算了」，就是没有别的要记了，
+  // 不该被当成一件事，也不该回一句「我可以帮你……」。
+  if (!actions && isNoDetailAnswer(latest.content)) {
+    return `好的，没有别的要记的了。\n\n${listBlock(tasks)}`;
+  }
+
+  // 只说了一个时间、没有上下文（「就是今天啊」「等下肯定也是今天」）：
+  // 当成一句确认，别当成新任务，也别再兜底。
+  if (!actions) {
+    const asserted = parseDueAnswer(latest.content);
+    if (asserted.kind === "today" || asserted.kind === "date") {
+      const label = asserted.kind === "today" ? "今天" : dayLabel(asserted.date);
+      return `好的，那就按${label}算。\n\n${listBlock(tasks)}`;
+    }
+  }
 
   // 都没有结果时：长句压成一条整体建出来，别让用户白说一场；
   // 追问状态下的任何非问句都按「没说要补充，就算另一件事」处理。问题类句子不建任务。

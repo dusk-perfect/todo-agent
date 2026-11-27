@@ -28,7 +28,8 @@ const DATE_PREFIX_RE =
   /^(?:今天|今日|明天|明日|后天|大后天|今晚|明早|明晚|(?:这|本|下|下下)?(?:周|星期)[一二三四五六日天末]|(?:这|本|下|下下)?(?:周|星期)|(?:这|本|下|下下)个?月(?:初|底|中)?|月初|月底|周末前)/;
 // 时刻型（十点、下午、晚上…）不剥：dueAt 只精确到天，剥掉就真丢了。
 // 「现在/马上」这类说的是当下，不是任务信息，剥掉。
-const INSTANT_PREFIX_RE = /^(?:现在|马上|立刻|待会(?:儿)?|等会(?:儿)?|一会儿|晚点|回头)/;
+const INSTANT_PREFIX_RE =
+  /^(?:现在|马上|立刻|等下|待下|待会(?:儿)?|等会(?:儿)?|一会儿|晚点|稍后|回头)/;
 // 具体时刻：摘出来放回标题，不能跟日期一起被削掉。
 // 「今晚」「明早」既是日子又是时段，放这里才能留在标题里——日期由 statedDay 单独取。
 const CLOCK_PREFIX_RE =
@@ -126,10 +127,19 @@ function findTask(message: string, tasks: Task[]): TaskMatch {
   return { task: ranked[0].task, candidates: [ranked[0].task], ambiguous: false };
 }
 
+// 标题开头的废话：「我」「等下」「要」这些说的是谁、什么时候、什么语气，
+// 不是事情本身，剥掉后剩下的才是要做的事。
+const LEADING_NOISE_RE =
+  /^(?:一下|一条|一个|一件|把|吧|呢|啊|哦|哈|呀|我|咱|俺|我们|现在|马上|立刻|等下|待会|待会儿|一会儿|晚点|稍后|要|得|需要)+/;
+
 function cleanTitle(raw: string): string {
-  return raw
-    .trim()
-    .replace(/^(?:一下|一条|一个|一件|把|吧|呢|啊|哦|哈)+/, "")
+  let title = raw.trim();
+  for (;;) {
+    const before = title;
+    title = title.replace(LEADING_NOISE_RE, "").trim();
+    if (title === before) break;
+  }
+  return title
     .replace(/(?:吧|呢|啊|哦|哈|呀)+$/, "")
     .replace(/^(?:的|了)+/, "")
     .trim();
@@ -160,6 +170,9 @@ function isTimeOnly(text: string): boolean {
 }
 
 // 陈述句里的「和」多半是介词（「和小东开会」），不是并列，硬拆会把一句话劈成半句
+// 左边以助动词收尾，说明「和」是介词不是并列：「我要和朋友出去玩」是一件事
+const AUX_END_RE = /(?:要|得|需要|想|会|能|可以|应该|必须|帮|给)$/;
+
 function splitTitles(raw: string, allowAnd = true): string[] {
   const text = raw.trim();
   if (!text) return [];
@@ -181,7 +194,11 @@ function splitTitles(raw: string, allowAnd = true): string[] {
     return title ? [title] : [];
   }
 
-  const separator = allowAnd
+  // 「和」只有在两边都说得完整时才是并列，否则按介词处理
+  const andIndex = text.indexOf("和");
+  const andIsConjunction =
+    allowAnd && andIndex > 0 && !AUX_END_RE.test(text.slice(0, andIndex).trim());
+  const separator = andIsConjunction
     ? /\s*(?:和|以及|、|,|，|;|；|然后|还有|顺便)\s*/
     : /\s*(?:以及|、|,|，|;|；|然后|还有|顺便)\s*/;
   return text
@@ -497,6 +514,12 @@ export function parseRuleActions(text: string, tasks: Task[]): Action[] | null {
 
   if (COMPLETE_RE.test(message)) {
     return withTask(message, tasks, (id) => ({ type: "complete", id }), "pending");
+  }
+
+  // 「今天有哪些任务？」：带了日期又问有哪些，问的就是那天要做的事
+  if (/(?:哪些|有什么|有啥|多少)/.test(message)) {
+    const dated = parseDueDate(message);
+    if (dated) return [{ type: "due", date: dated.date }];
   }
 
   if (LIST_RE.test(message)) {

@@ -643,3 +643,62 @@ test("「把买牛奶设为明天内完成」能改完成日期", async (t) => {
   assert.equal(store.list()[0]?.dueAt, daysFromToday(1));
   assert.match(answer, /买牛奶/);
 });
+
+test("「我要和朋友出去玩」不被「和」拆成两条", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下明天早上我要和朋友出去玩");
+  assert.equal(store.list().length, 1);
+  assert.equal(store.list()[0]?.title, "早上我要和朋友出去玩");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(1));
+});
+
+test("「我等下要写报告」去掉主语和当下词，落在当天", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下我等下要写报告");
+  assert.equal(store.list()[0]?.title, "写报告");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(0));
+});
+
+test("被问哪天时回「就是今天啊」按当天记", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下交报表，明天内完成");
+  await say("没有");
+  await say("再记一条取快递");
+  assert.equal(store.list()[1]?.dueAt, undefined);
+
+  const answer = await say("就是今天啊");
+  assert.equal(store.list()[1]?.dueAt, daysFromToday(0));
+  assert.match(answer, /取快递/);
+  assert.doesNotMatch(answer, /我可以帮你/);
+});
+
+test("没有待追问时说「没有」「等下肯定也是今天」都有正常回应", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+
+  const empty = await say("没有");
+  assert.match(empty, /没有别的要记的了/);
+  assert.doesNotMatch(empty, /我可以帮你/);
+
+  const today = await say("等下肯定也是今天");
+  assert.match(today, /按今天算/);
+  assert.doesNotMatch(today, /我可以帮你/);
+  assert.equal(store.list().length, 1);
+});
+
+test("「今天有哪些任务？」按当天筛选，不列全部", async (t) => {
+  const { say } = await startConversation(t);
+  await say("帮我记一下今天要交的电费");
+  await say("没有");
+  await say("帮我记一下明天的会议");
+  await say("没有");
+
+  const today = await say("今天有哪些任务？");
+  assert.match(today, /电费/);
+  assert.doesNotMatch(today, /会议/);
+
+  const tomorrow = await say("明天有哪些任务？");
+  assert.match(tomorrow, /会议/);
+  assert.doesNotMatch(tomorrow, /电费/);
+});

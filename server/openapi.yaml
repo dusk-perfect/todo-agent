@@ -5,10 +5,40 @@ info:
 servers:
   - url: http://127.0.0.1:3000
 paths:
+  /api/chat:
+    post:
+      operationId: chat
+      summary: 发送对话历史，返回小明的本轮回复
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/ChatMessage" }
+      responses:
+        "200":
+          description: 本轮回复
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reply: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /api/tasks:
     get:
       operationId: listTasks
       summary: 按创建顺序列出全部任务，包括已完成任务
+      parameters: [{ $ref: "#/components/parameters/UserId" }]
       responses:
         "200":
           description: 任务列表；空列表为 []
@@ -20,6 +50,7 @@ paths:
     post:
       operationId: createTask
       summary: 创建一条未完成任务
+      parameters: [{ $ref: "#/components/parameters/UserId" }]
       requestBody:
         required: true
         content:
@@ -43,6 +74,7 @@ paths:
         in: path
         required: true
         schema: { type: string }
+      - $ref: "#/components/parameters/UserId"
     patch:
       operationId: updateTask
       summary: 修改标题或完成状态
@@ -72,7 +104,60 @@ paths:
         "204":
           description: 删除成功，响应体为空
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/reminders:
+    get:
+      operationId: listReminders
+      summary: 按已过期、今天、一小时内到点分三类的待办提醒
+      description: 只统计未完成的任务；已完成的不会再打扰
+      parameters: [{ $ref: "#/components/parameters/UserId" }]
+      responses:
+        "200":
+          description: 三类提醒
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReminderBuckets" }
+  /api/conversations/{sessionId}:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        description: 会话 id，由前端生成
+        schema: { type: string }
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: getConversation
+      summary: 取回某次会话最近若干轮对话
+      responses:
+        "200":
+          description: 对话记录；没有记录时为空数组
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChatMessage" }
+    delete:
+      operationId: clearConversation
+      summary: 清空某次会话的对话，不影响任务
+      responses:
+        "204":
+          description: 清空成功，响应体为空
 components:
+  parameters:
+    UserId:
+      name: x-user-id
+      in: header
+      required: false
+      description: 匿名用户 id；不带时使用默认单用户清单
+      schema: { type: string }
+    SessionId:
+      name: x-session-id
+      in: header
+      required: false
+      description: 会话 id；只有带这个头时对话才会落盘
+      schema: { type: string }
   schemas:
     Title:
       type: string
@@ -86,6 +171,41 @@ components:
         id: { type: string, format: uuid }
         title: { $ref: "#/components/schemas/Title" }
         done: { type: boolean }
+        priority:
+          type: string
+          enum: [high, medium, low]
+          description: 优先级，由对话设置；任务接口本身不收这个字段
+        estimate:
+          type: string
+          enum: [large, medium, small]
+          description: 工作量，由对话设置；任务接口本身不收这个字段
+        dueAt:
+          type: string
+          description: 完成日期 YYYY-MM-DD，由对话设置
+        dueTime:
+          type: string
+          description: 当天的具体时刻 HH:MM，用于到期提醒
+        detail:
+          type: string
+          description: 创建后追问得到的备注
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+    ReminderBuckets:
+      type: object
+      properties:
+        overdue:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
+        today:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
+        soon:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
     Error:
       type: object
       required: [error]

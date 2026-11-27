@@ -189,15 +189,17 @@ function mdParagraphs(md) {
   );
 }
 
-// ── 6. 三份 SUBMIT 副本：上级目录 docx ↔ 仓库 SUBMIT.md ↔ 桌面 docx ──
+// ── 6. 桌面提交件（唯一一份 Word）↔ 仓库 SUBMIT.md ──────────────────
 {
   const docxArg = process.argv.indexOf("--docx");
   const docxPath =
-    docxArg > -1 ? resolve(process.argv[docxArg + 1]) : resolve(ROOT, "..", "SUBMIT.docx");
+    docxArg > -1
+      ? resolve(process.argv[docxArg + 1])
+      : resolve(homedir(), "Desktop", "submit.docx");
   const mdParas = mdParagraphs(read("SUBMIT.md"));
 
   if (!existsSync(docxPath)) {
-    check("上级目录 SUBMIT.docx ↔ 仓库 SUBMIT.md", false, `找不到 ${docxPath}`);
+    check("桌面提交件 ↔ 仓库 SUBMIT.md", false, `找不到 ${docxPath}`);
   } else {
     const docParas = docxParagraphs(docxPath);
     const diffs = [];
@@ -205,24 +207,7 @@ function mdParagraphs(md) {
       if (docParas[i] !== mdParas[i]) diffs.push(i + 1);
     }
     check(
-      "上级目录 SUBMIT.docx ↔ 仓库 SUBMIT.md",
-      diffs.length === 0,
-      diffs.length ? `第 ${diffs.join(",")} 段不一致` : `${mdParas.length} 段逐段一致`,
-    );
-  }
-
-  // 桌面那份是真正发出去的附件，存在就必须和仓库一致
-  const desktop = resolve(homedir(), "Desktop", "submit.docx");
-  if (!existsSync(desktop)) {
-    check("桌面 submit.docx ↔ 仓库 SUBMIT.md", true, "桌面上没有该文件，跳过");
-  } else {
-    const docParas = docxParagraphs(desktop);
-    const diffs = [];
-    for (let i = 0; i < Math.max(docParas.length, mdParas.length); i += 1) {
-      if (docParas[i] !== mdParas[i]) diffs.push(i + 1);
-    }
-    check(
-      "桌面 submit.docx ↔ 仓库 SUBMIT.md",
+      "桌面提交件 ↔ 仓库 SUBMIT.md",
       diffs.length === 0,
       diffs.length ? `第 ${diffs.join(",")} 段不一致` : `${mdParas.length} 段逐段一致`,
     );

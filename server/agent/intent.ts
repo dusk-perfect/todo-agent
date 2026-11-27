@@ -47,7 +47,13 @@ const DEADLINE_SUFFIX_RE = /^(?:之前|以前|前|之内|以内)/;
 // 「去取快递」也只是多一个字，比切出病句划算。
 
 const DELETE_RE = /(删掉|删除|去掉|移除|清掉|清除|不要了|取消掉|撤掉|删了)/;
-const COMPLETE_RE = /(好了|完成了|做完|搞定|弄好|办完|结束了)/;
+// 完成动词的各种说法：
+//  - 动补式必须带「了/啦/过」：「写好了」「买好了」「改完了」。
+//    不带「了」的是计划而不是完成：「今晚把报告改完」是待办，不是完成汇报。
+//  - 「完成」本身就是完成义，带不带「了」都算：「已经完成买牛奶」「完成了买牛奶」
+//  - 单独的「好了」也必须带「了」，否则「你好」会被当成完成指令
+const COMPLETE_RE =
+  /(?:已经|已|刚|终于)?(?:(?:完成|做|写|看|读|吃|听|买|干|办|弄|搞|订|发|改|整|收拾|处理)(?:完|好)(?:了|啦|过)|完成(?:了|啦|过)?|结束(?:了|啦|过)?|搞定(?:了|啦|过)?|好了)/;
 const REOPEN_RE = /(没做完|还没完成|未完成|取消完成|重新打开|标记未完成)/;
 const RENAME_RE = /(?:改名叫|改名为|重命名为|改成)(.+)/;
 const LIST_RE = /(有哪些|有什么|看看|看一下|列一下|列出|清单|待办|任务|都要做|还需|还剩)/;
@@ -103,6 +109,9 @@ function referenceScore(message: string, title: string): number {
   if (!m || !t) return 0;
   if (m === t) return 1;
   if (m.includes(t)) return 0.95;
+  // 用户说的是任务名的一部分（「报告」指「下午交报告」）：也算高度匹配，
+  // 但比完整相等低一档，两条都像的时候好反问而不是替用户挑
+  if (t.includes(m)) return 0.93;
   const common = longestCommonSubstring(m, t);
   if (common.length < 2) return 0;
   return 0.5 + (0.4 * common.length) / Math.min(m.length, t.length);
@@ -304,7 +313,7 @@ export function stripDeadlineSegments(text: string): { rest: string; dueAt?: str
   return { rest: kept.join("").replace(/[，,；;。]{2,}/g, "，"), dueAt };
 }
 
-function extractAttributes(text: string): { rest: string; attrs: Attributes } {
+export function extractAttributes(text: string): { rest: string; attrs: Attributes } {
   let rest = text;
   const attrs: Attributes = {};
 
@@ -365,19 +374,33 @@ function notFound(reference: string, tasks: Task[]): Action[] {
 
 type MatchScope = "pending" | "done" | "any";
 
-function withTask(
-  message: string,
-  tasks: Task[],
-  build: (id: string) => Action,
-  scope: MatchScope = "any",
-): Action[] {
-  const reference = cleanTitle(
+// 从一句话里剥掉动作词，剩下的就是「说的是哪一条任务」
+function referenceOf(message: string): string {
+  return cleanTitle(
     message
       .replace(DELETE_RE, "")
       .replace(REOPEN_RE, "")
       .replace(COMPLETE_RE, "")
       .replace(RENAME_RE, ""),
   );
+}
+
+// 「都做完了」「全部搞定了」「任务都完成了」：没有点名哪一条，指的是所有待办
+function isRangeReference(reference: string): boolean {
+  if (reference === "") return false;
+  const left = reference
+    .replace(/(?:都|全部|所有|这些|那些|任务|待办|事项|事情|东西|事儿)/g, "")
+    .trim();
+  return left === "";
+}
+
+function withTask(
+  message: string,
+  tasks: Task[],
+  build: (id: string) => Action,
+  scope: MatchScope = "any",
+): Action[] {
+  const reference = referenceOf(message);
   // 「删除待办」这类没给标题的说法不猜，先问要动哪一条
   if (GENERIC_REFERENCE_RE.test(reference)) {
     if (tasks.length === 0) return notFound("", tasks);
@@ -513,6 +536,12 @@ export function parseRuleActions(text: string, tasks: Task[]): Action[] | null {
   }
 
   if (COMPLETE_RE.test(message)) {
+    // 「都做完了」没点名哪一条：清单里的待办全部标完成
+    if (isRangeReference(referenceOf(message))) {
+      const pending = tasks.filter((task) => !task.done);
+      if (pending.length === 0) return [{ type: "ask", question: "清单里没有待办的任务。" }];
+      return pending.map((task) => ({ type: "complete", id: task.id }));
+    }
     return withTask(message, tasks, (id) => ({ type: "complete", id }), "pending");
   }
 

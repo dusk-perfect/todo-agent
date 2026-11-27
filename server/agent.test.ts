@@ -702,3 +702,76 @@ test("「今天有哪些任务？」按当天筛选，不列全部", async (t) =
   assert.match(tomorrow, /会议/);
   assert.doesNotMatch(tomorrow, /电费/);
 });
+
+test("完成的各种说法都能听懂：已经完成／完成／搞定了／写好了", async (t) => {
+  const phrases = [
+    "已经完成买牛奶",
+    "完成了买牛奶",
+    "完成买牛奶",
+    "牛奶买好了",
+    "搞定买牛奶",
+    "买牛奶搞定了",
+    "把买牛奶完成了",
+  ];
+  for (const phrase of phrases) {
+    const { store, say } = await startConversation(t);
+    await say("帮我记一下买牛奶");
+    await say("没有");
+    const answer = await say(phrase);
+    assert.equal(store.list()[0]?.done, true, `${phrase} 应该标记完成`);
+    assert.match(answer, /标记为完成/, `${phrase} 应该回一句标记完成`);
+    assert.match(answer, /☑ 1\. 买牛奶/);
+  }
+});
+
+test("追问备注期间说完成指令：完成对应任务，不新建一条", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("下午交报告");
+
+  const answer = await say("已经完成买牛奶");
+  assert.equal(store.list().length, 2, "不该多出一条任务");
+  assert.deepEqual(
+    store.list().map((task) => [task.title, task.done]),
+    [
+      ["买牛奶", true],
+      ["下午交报告", false],
+    ],
+  );
+  assert.match(answer, /标记为完成/);
+  assert.doesNotMatch(answer, /已记下「已经完成买牛奶」/);
+  // 上一轮在等备注，这一轮说了别的指令，要说明备注先留空
+  assert.match(answer, /「下午交报告」的备注先留空/);
+});
+
+test("「都做完了」把清单里的待办全部标记完成", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("再记一条取快递");
+  await say("没有");
+
+  await say("都做完了");
+  assert.equal(
+    store.list().every((task) => task.done),
+    true,
+  );
+});
+
+test("动补式不带「了」是计划不是完成，「今晚把报告改完」照样建任务", async (t) => {
+  const { store, say } = await startConversation(t);
+  const answer = await say("今晚把报告改完");
+  assert.equal(store.list().length, 1);
+  assert.equal(store.list()[0]?.done, false);
+  assert.match(answer, /改完/);
+});
+
+test("「你好」不会被当成完成指令", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("你好");
+  assert.equal(store.list()[0]?.done, false);
+  assert.equal(store.list().length, 1);
+});

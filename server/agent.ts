@@ -24,6 +24,7 @@ import { formatResults } from "./agent/format.ts";
 import {
   parseRuleActions,
   parseLongStatementTitle,
+  extractAttributes,
   stripDeadlineSegments,
   FALLBACK_QUESTION,
 } from "./agent/intent.ts";
@@ -97,6 +98,8 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
   // 上一轮刚追问过细节：只有用户明确说要补充，才写进上一条任务。
   // 说「没有」就结束；没说要补充（比如「我现在要去取快递」）一律按另一件事处理。
   const pending = pendingDetailTask(messages, snapshot);
+  // 追问期间说了别的指令（完成、删除、另一件事），要说明上一条的备注先留空
+  let droppedDetailTitle: string | null = null;
   if (pending) {
     const answer = parseDetailAnswer(latest.content);
     if (answer.kind === "none") {
@@ -104,6 +107,7 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     }
     if (answer.kind === "agree") return writeDetail(answer.text, pending, tasks);
     if (answer.kind === "ask") return detailContentPrompt(pending.title);
+    droppedDetailTitle = pending.title;
   }
 
   // 上一轮刚问过「哪天完成」：这一句先说日期，就补到那条任务上
@@ -150,7 +154,11 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     const title =
       parseLongStatementTitle(latest.content) ??
       (pending ? latest.content.trim().slice(0, 200) : null);
-    if (title) actions = [{ type: "create", title }];
+    if (title) {
+      // 兜底建档也要把日期、优先级、工作量解出来，别整句塞进标题
+      const { rest, attrs } = extractAttributes(title);
+      actions = [{ type: "create", title: rest || title, fields: attrs }];
+    }
   }
   if (!actions) actions = [{ type: "ask", question: FALLBACK_QUESTION }];
 
@@ -195,10 +203,20 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     // 已经有一个反问在等用户回答，别再叠一个追问
     if (title && asked) return answer;
     // 追问被打断时说明一句，免得用户以为刚才那条被改了
-    if (title && pending) {
-      return `这算另一件事，「${pending.title}」的备注先留空。\n\n${answer}` + detailPrompt(title);
+    if (title && droppedDetailTitle) {
+      return (
+        `这算另一件事，「${droppedDetailTitle}」的备注先留空。\n\n${answer}` + detailPrompt(title)
+      );
     }
     if (title) return answer + detailPrompt(title);
+  }
+  // 本轮做的是完成、删除这类操作，但上一轮在等备注：说明备注先留空。
+  // 只是问一句清单不算打断，不提上一条，免得答非所问。
+  const mutating = actions.some((action) =>
+    ["create", "complete", "reopen", "rename", "setAttrs", "delete"].includes(action.type),
+  );
+  if (droppedDetailTitle && mutating) {
+    return `「${droppedDetailTitle}」的备注先留空。\n\n${answer}`;
   }
   return answer;
 }

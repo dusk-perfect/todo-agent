@@ -1,6 +1,6 @@
 import type { ChatMessage } from "../../shared/chat.ts";
 import type { Task } from "../task-store.ts";
-import { parseDueDate } from "./date.ts";
+import { parseDueTime, statedDay } from "./date.ts";
 
 // 追问语里必须带这个标记，下一轮才认得出「这句是在回答备注」。
 // 兼容旧文案「补充细节吗」，避免升级前留下的对话被当成另一件事。
@@ -84,24 +84,38 @@ export function pendingDueTask(messages: ChatMessage[], tasks: Task[]): Task | u
 }
 
 export type DueAnswer =
-  | { kind: "date"; date: string } // 说清了哪天
-  | { kind: "today" } // 不打算挑日子，就按今天
+  | { kind: "date"; date: string; time?: string } // 说清了哪天（可能还带了时刻）
+  | { kind: "today"; time?: string } // 不打算挑日子，就按今天（含只说了时段的情况）
   | { kind: "other"; text: string }; // 说的是别的事
+
+// 把日期词、时段词、钟点从一句里摘干净，剩下的才是「事情」。
+// 剩下为空，说明这句就是在交代时间，不是另一件事。
+const TIME_WORD_RE =
+  /(?:\d{1,2}|[一二三四五六七八九十]{1,2})\s*[点时](?:半|\d{1,2}分)?|凌晨|清晨|早晨|早上|上午|中午|午后|下午|傍晚|晚上|夜里|今晚|今早|今夜|明早|明晚|明夜|今天|今日|明天|明日|后天|大后天|周末|(?:这|本|下|下下)?(?:周|星期)[一二三四五六日天]?|(?:这|本|下|下下)个?月(?:初|底|末|中)?|(?:本|这个)?月[底末初]/g;
+
+function timeOnlyRest(message: string): string {
+  return message
+    .replace(TIME_WORD_RE, "")
+    .replace(/[，,。.！!？?；;、\s]/g, "")
+    .replace(/^(?:就|在|到|定在|改到|改成|设为|是)/, "")
+    .replace(/(?:完成|做完|搞定|办完|吧|了|呀|哈)$/, "")
+    .replace(/(?:之前|以前|内|以内|前|截止)$/, "");
+}
 
 export function parseDueAnswer(text: string): DueAnswer {
   const message = text.trim();
-  const due = parseDueDate(message);
-  if (due) {
-    // 只有「整句就是在说日期」才算回答；「我明天得准备面试材料」是新任务
-    const left = message
-      .replace(due.matched, "")
-      .replace(/[，,。.！!？?；;、\s]/g, "")
-      .replace(/^(?:就|在|到|定在|改到|改成|设为|是)/, "")
-      .replace(/(?:完成|做完|搞定|办完|吧|了|呀|哈)$/, "")
-      .replace(/(?:之前|以前|内|以内|前|截止)$/, "");
-    if (left === "") return { kind: "date", date: due.date };
-    return { kind: "other", text: message };
-  }
   if (DUE_NONE_RE.test(message)) return { kind: "today" };
+
+  const day = statedDay(message);
+  if (day) {
+    // 只有「整句就是在说时间」才算回答；「我明天得准备面试材料」是新任务
+    if (timeOnlyRest(message) !== "") return { kind: "other", text: message };
+    const clock = parseDueTime(message);
+    return clock ? { kind: "date", date: day, time: clock.time } : { kind: "date", date: day };
+  }
+
+  // 只给了钟点、没说哪一天（「三点」）：按当天算，时刻一并记下
+  const clock = parseDueTime(message);
+  if (clock && timeOnlyRest(message) === "") return { kind: "today", time: clock.time };
   return { kind: "other", text: message };
 }

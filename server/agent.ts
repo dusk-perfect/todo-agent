@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../shared/chat.ts";
 import type { Task, TaskStore } from "./task-store.ts";
 import { executeActions, type Action } from "./agent/actions.ts";
-import { daysFromToday, dueBadge, parseDueDate, parseDueTime } from "./agent/date.ts";
+import { daysFromToday, dueBadge, parseDueDate, parseDueTime, statedDay } from "./agent/date.ts";
 import {
   detailContentPrompt,
   detailPrompt,
@@ -105,8 +105,11 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     const date =
       answer.kind === "date" ? answer.date : answer.kind === "today" ? daysFromToday(0) : null;
     if (date) {
-      executeActions(tasks, [{ type: "setAttrs", id: duePending.id, fields: { dueAt: date } }]);
-      return `「${duePending.title}」记到 ${dueBadge(date)}。\n\n${listBlock(tasks)}`;
+      const fields: Record<string, unknown> = { dueAt: date };
+      if (answer.kind !== "other" && answer.time) fields.dueTime = answer.time;
+      executeActions(tasks, [{ type: "setAttrs", id: duePending.id, fields }]);
+      const time = typeof fields.dueTime === "string" ? ` ${fields.dueTime}` : "";
+      return `「${duePending.title}」记到 ${dueBadge(date)}${time}。\n\n${listBlock(tasks)}`;
     }
     // 说的是别的事：这条先按当天算，再照常处理这句话
     executeActions(tasks, [
@@ -127,11 +130,12 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
   }
   if (!actions) actions = [{ type: "ask", question: FALLBACK_QUESTION }];
 
-  // 没提日期默认当天；但刚说过别的日期、这句又没说，就先问清楚，别默认错
+  // 没提日期默认当天；但刚说过别的日期、这句又没说，就先问清楚，别默认错。
+  // 「早上/中午/下午」这类只说时段的说法本身就限定在当天，等价于说了今天。
   const createCount = actions.filter((action) => action.type === "create").length;
-  const messageDue = parseDueDate(latest.content)?.date ?? null;
-  const inherited = lastMentionedDate(messages);
   const today = daysFromToday(0);
+  const statedDate = statedDay(latest.content);
+  const inherited = lastMentionedDate(messages);
   let askDueTitle: string | null = null;
 
   actions = actions.map((action) => {
@@ -140,7 +144,7 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     if (typeof fields.dueAt === "string") return action;
     // 这句话里说过的日期对句中每条任务都算数：
     // 「下周三之前把复盘写完，然后发给张老师」两条都该落在下周三
-    if (messageDue) return { ...action, fields: { ...fields, dueAt: messageDue } };
+    if (statedDate) return { ...action, fields: { ...fields, dueAt: statedDate } };
     if (createCount === 1 && inherited && inherited !== today) {
       askDueTitle = action.title;
       return action;
@@ -179,6 +183,7 @@ const QUESTION_RE = /[？?]\s*$|^(?:为什么|怎么|多少|几点|什么|谁|�
 
 // 最近几轮用户提过的日期。用来判断「接着说的这条」是不是该问清楚哪天：
 // 上一条说的是明天，下一条不吭声就记成今天，多半是记错了。
+// 只说了时段（「下午」）的那条就是当天，同样算一次明确的日期交代。
 function lastMentionedDate(messages: ChatMessage[]): string | null {
   const history = messages.slice(0, -1);
   let seen = 0;
@@ -187,8 +192,8 @@ function lastMentionedDate(messages: ChatMessage[]): string | null {
     if (!message || message.role !== "user") continue;
     seen += 1;
     if (seen > 4) break;
-    const due = parseDueDate(message.content);
-    if (due) return due.date;
+    const day = statedDay(message.content);
+    if (day) return day;
   }
   return null;
 }

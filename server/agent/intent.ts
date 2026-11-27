@@ -29,9 +29,10 @@ const DATE_PREFIX_RE =
 // 时刻型（十点、下午、晚上…）不剥：dueAt 只精确到天，剥掉就真丢了。
 // 「现在/马上」这类说的是当下，不是任务信息，剥掉。
 const INSTANT_PREFIX_RE = /^(?:现在|马上|立刻|待会(?:儿)?|等会(?:儿)?|一会儿|晚点|回头)/;
-// 具体时刻：摘出来放回标题，不能跟日期一起被削掉
+// 具体时刻：摘出来放回标题，不能跟日期一起被削掉。
+// 「今晚」「明早」既是日子又是时段，放这里才能留在标题里——日期由 statedDay 单独取。
 const CLOCK_PREFIX_RE =
-  /^(?:(?:[0-9]{1,2}|[一二三四五六七八九十]{1,3})(?:点|点钟|时)(?:半|[0-9]{1,2}分)?|上午|下午|中午|晚上|早上|凌晨|清晨|傍晚)/;
+  /^(?:(?:[0-9]{1,2}|[一二三四五六七八九十]{1,3})(?:点|点钟|时)(?:半|[0-9]{1,2}分)?|上午|下午|中午|晚上|早上|凌晨|清晨|傍晚|今晚|今早|明早|明晚)/;
 // 带这些词的多半是在问（「下午三点开会吗」），别当成待办
 const QUESTION_TAIL_RE = /[吗呢]\s*$|(?:怎么|什么|啥|哪些|哪个|谁|多少|几点|几号)/;
 // 助动词和「准备/打算」要分开：「我要准备面试」里的准备才是事情本身，
@@ -64,6 +65,8 @@ const SET_ESTIMATE_RE = /(.+?)(?:设为|设成|改成|标为|定为|弄成|设�
 const SET_DUE_RES = [
   /(.+?)(?:的)?(?:截止日期|到期日期|截止时间|截止|到期)(?:改成|设为|是)?(今天|今日|明天|明日|后天|大后天|\d{1,2}月\d{1,2}[日号]?)/,
   /(.+?)(今天|今日|明天|明日|后天|大后天|\d{1,2}月\d{1,2}[日号]?)(?:到期|截止)/,
+  // 「把打车设为明天内完成」「改到后天」：界面上的说法反过来用，也该听得懂
+  /(.+?)(?:改到|改成|设为|设成|定在|安排到|挪到)(今天|今日|明天|明日|后天|大后天|下{1,2}周[一二三四五六日天]|\d{1,2}月\d{1,2}[日号]?)(?:之内|以内|内)?(?:完成|做完|搞定)?$/,
 ];
 
 const PRIORITY = { 高: "high", 中: "medium", 低: "low" } as const;
@@ -197,6 +200,8 @@ function statementTitle(message: string): string | null {
 
   let sawModal = false;
   let clock = "";
+  // 句首交代了哪一天（今天/明天/下周三…）：带日期的陈述本身就是一张待办
+  let sawDate = false;
   for (;;) {
     const before = rest;
     const clockMatch = rest.match(CLOCK_PREFIX_RE);
@@ -204,6 +209,7 @@ function statementTitle(message: string): string | null {
       clock += clockMatch[0];
       rest = rest.slice(clockMatch[0].length);
     }
+    if (DATE_PREFIX_RE.test(rest)) sawDate = true;
     rest = rest.replace(DATE_PREFIX_RE, "");
     rest = rest.replace(INSTANT_PREFIX_RE, "");
 
@@ -230,8 +236,11 @@ function statementTitle(message: string): string | null {
     .replace(/[，,、：:。.]+$/, "")
     .replace(/(?:了|啦)+$/, "");
 
-  // 「下午三点和小东开会」这种省了助动词的口语：有时刻、剩的是事情、又不带疑问词，也算一件事
-  const looksLikeTask = clock !== "" && rest.length >= 2 && !QUESTION_TAIL_RE.test(rest);
+  // 「下午三点和小东开会」这种省了助动词的口语：有时刻、剩的是事情、又不带疑问词，也算一件事。
+  // 只说日期（「下周三之前把复盘写完」）同样算，但正文要够长——「明天再说」这类闲聊不算。
+  const looksLikeTask =
+    !QUESTION_TAIL_RE.test(rest) &&
+    ((clock !== "" && rest.length >= 2) || (sawDate && rest.length >= 3));
   if (!sawModal && !looksLikeTask) return null;
   return rest.length >= 2 ? `${clock}${rest}` : null;
 }

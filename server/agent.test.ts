@@ -572,3 +572,74 @@ test("清单只剩一条时，说「删除待办」也不擅自删", async (t) =
   assert.match(answer, /要处理哪一条/);
   assert.equal(store.list().length, 1);
 });
+
+test("只说了时段（早上/中午/下午）就是当天，不再追问哪天", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下明天去体检");
+  await say("没有");
+
+  // 上文刚说过明天，这里说了「下午」就不再追问，直接落当天
+  const answer = await say("帮我记一下下午去银行");
+  assert.doesNotMatch(answer, /哪天完成/);
+  assert.equal(store.list()[1]?.dueAt, daysFromToday(0));
+  assert.equal(store.list()[1]?.title, "下午去银行");
+
+  await say("没有");
+  await say("帮我记一下中午和张姐吃饭");
+  assert.equal(store.list()[2]?.dueAt, daysFromToday(0));
+  assert.equal(store.list()[2]?.title, "中午和张姐吃饭");
+});
+
+test("被问哪天时只回时段，按当天记并带上时刻", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下交报表，明天内完成");
+  await say("没有");
+  await say("再记一条取快递");
+  assert.equal(store.list()[1]?.dueAt, undefined);
+
+  const answer = await say("下午三点");
+  assert.equal(store.list()[1]?.dueAt, daysFromToday(0));
+  assert.equal(store.list()[1]?.dueTime, "15:00");
+  assert.doesNotMatch(answer, /哪天完成/);
+});
+
+test("今晚算当天、明早算次日，时段词留在标题里", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("今晚把报告改完");
+  assert.equal(store.list()[0]?.title, "今晚把报告改完");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(0));
+
+  await say("没有");
+  await say("明早八点送孩子上学");
+  assert.equal(store.list()[1]?.title, "明早八点送孩子上学");
+  assert.equal(store.list()[1]?.dueAt, daysFromToday(1));
+  assert.equal(store.list()[1]?.dueTime, "08:00");
+});
+
+test("没有「帮我记一下」的长句，只要句首交代了日期也建任务", async (t) => {
+  const { store, say } = await startConversation(t);
+  const answer = await say("下周三之前把季度复盘写完，然后发给张老师");
+  assert.match(answer, /已记下「季度复盘写完」/);
+  const today = new Date().getDay();
+  const current = today === 0 ? 6 : today - 1;
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(7 - current + 2)); // 下周三
+});
+
+test("闲聊和问句不建任务", async (t) => {
+  const { store, say } = await startConversation(t);
+  for (const text of ["明天再说", "今天好累", "明天有空吗", "早上好", "晚上吃什么"]) {
+    await say(text);
+  }
+  assert.equal(store.list().length, 0);
+});
+
+test("「把买牛奶设为明天内完成」能改完成日期", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(0));
+
+  const answer = await say("把买牛奶设为明天内完成");
+  assert.equal(store.list()[0]?.dueAt, daysFromToday(1));
+  assert.match(answer, /买牛奶/);
+});

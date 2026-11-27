@@ -17,6 +17,25 @@ export interface DueMatch {
   matched: string;
 }
 
+// 只说明一天里的哪个时段、不跨天的词：说了它们就是在说当天。
+const DAY_PERIOD_RE = /凌晨|清晨|早晨|早上|上午|中午|午后|下午|傍晚|晚上|夜里/;
+
+export function mentionsDayPeriod(text: string): boolean {
+  return DAY_PERIOD_RE.test(text);
+}
+
+// 一句话里「指定了哪一天」，只用来决定记到哪天，不动标题原文。
+// 与 parseDueDate 的区别：后者的匹配串会从标题里删掉，而「今晚」「明早」删了标题就少信息，
+// 所以这类词只在这里取日期，不进 parseDueDate。
+export function statedDay(text: string): string | null {
+  const due = parseDueDate(text);
+  if (due) return due.date;
+  if (/今晚|今早|今夜/.test(text)) return daysFromToday(0);
+  if (/明早|明晚|明夜/.test(text)) return daysFromToday(1);
+  if (mentionsDayPeriod(text)) return daysFromToday(0);
+  return null;
+}
+
 export function parseDueDate(text: string): DueMatch | null {
   const relative: Array<[RegExp, number]> = [
     [/大后天/, 3],

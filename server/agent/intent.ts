@@ -44,11 +44,19 @@ const DEADLINE_SUFFIX_RE = /^(?:之前|以前|前|之内|以内)/;
 // 「去/来」不剥：「去医院拿体检报告」比「医院拿体检报告」自然，
 // 「去取快递」也只是多一个字，比切出病句划算。
 
-const DELETE_RE = /(删掉|删除|去掉|移除|清掉|不要了|取消掉|撤掉|删了)/;
+const DELETE_RE = /(删掉|删除|去掉|移除|清掉|清除|不要了|取消掉|撤掉|删了)/;
 const COMPLETE_RE = /(好了|完成了|做完|搞定|弄好|办完|结束了)/;
 const REOPEN_RE = /(没做完|还没完成|未完成|取消完成|重新打开|标记未完成)/;
 const RENAME_RE = /(?:改名叫|改名为|重命名为|改成)(.+)/;
 const LIST_RE = /(有哪些|有什么|看看|看一下|列一下|列出|清单|待办|任务|都要做|还需|还剩)/;
+// 清空已完成 / 清空全部 / 清空对话，这三类必须先于「创建」判断，
+// 否则在等备注的状态下会被当成一件新事记下来。
+const CLEAR_DONE_RE =
+  /(?:清空|清除|清理|删除|删掉|移除)[^，。]{0,6}(?:已完成|完成的|做完的|已经做完)|(?:已完成|做完的)[^，。]{0,4}(?:删掉|删除|清空|清除|清理)/;
+const CLEAR_ALL_RE =
+  /(?:删除|清空|清除|清掉|清理)[^，。]{0,4}(?:全部|所有)[^，。]{0,4}(?:任务|待办|清单)|(?:全部|所有)(?:任务|待办|清单)[^，。]{0,4}(?:删除|清空|清除|清掉|清理)/;
+const CLEAR_CHAT_RE =
+  /(?:清空|清除|清掉|重置|忘掉|忘记|抹掉|删掉|删除)[^，。]{0,8}(?:对话|聊天|记忆|记录|历史)|(?:对话|聊天|记忆|记录|历史)[^，。]{0,6}(?:清空|清除|重置|忘掉|删掉|删除)/;
 const DUE_QUERY_RE = /(?:到期|截止)/;
 const DUE_QUERY_MARKER = /(?:有哪些|有什么|哪些|看看|查一下|列一下|清单|任务)/;
 const SET_PRIORITY_RE = /(.+?)(?:设为|设成|改成|标为|定为|弄成|设置|调成)(高|中|低)优先级/;
@@ -121,6 +129,19 @@ function cleanTitle(raw: string): string {
     .replace(/^(?:一下|一条|一个|一件|把|吧|呢|啊|哦|哈)+/, "")
     .replace(/(?:吧|呢|啊|哦|哈|呀)+$/, "")
     .replace(/^(?:的|了)+/, "")
+    .trim();
+}
+
+// 「删除待办」「清空任务」里没有具体标题，按指代处理，别当成一个名字叫「待办」的任务
+const GENERIC_REFERENCE_RE = /^(?:待办|任务|清单|列表|东西|事项|全部|所有)$/;
+
+// 「把买牛奶这条待办删掉」里的「这条待办」是说话习惯，不是标题的一部分。
+// 只在直接匹配失败时兜底再试一次，避免把真叫「交任务」的任务削成「交」。
+function stripTaskSuffix(text: string): string {
+  return text
+    .replace(/(?:这|那|该)?(?:一)?(?:条|个|件|项)?(?:待办|任务|事项?)$/, "")
+    .replace(/(?:这|那|该)(?:一)?(?:条|个|件|项)$/, "")
+    .replace(/的$/, "")
     .trim();
 }
 
@@ -301,9 +322,18 @@ function isCleanReference(reference: string): boolean {
   return text.length > 0 && text.length <= 12 && !/[，,；;。]/.test(text);
 }
 
-function notFound(): Action[] {
+function notFound(reference: string, tasks: Task[]): Action[] {
+  if (tasks.length === 0) {
+    return [{ type: "ask", question: "清单里还没有任务。可以说「帮我记一下买牛奶」先记一条。" }];
+  }
+  if (reference.trim().length === 0) {
+    return [{ type: "ask", question: "要处理哪一条？可以说「删掉买牛奶」这样带上标题。" }];
+  }
   return [
-    { type: "ask", question: "没找到对应的任务。你可以说「看看清单」确认一下当前有哪些任务。" },
+    {
+      type: "ask",
+      question: `没找到「${reference}」这条任务，可以说「看看清单」确认一下当前有哪些任务。`,
+    },
   ];
 }
 
@@ -322,7 +352,29 @@ function withTask(
       .replace(COMPLETE_RE, "")
       .replace(RENAME_RE, ""),
   );
+  // 「删除待办」这类没给标题的说法不猜，先问要动哪一条
+  if (GENERIC_REFERENCE_RE.test(reference)) {
+    if (tasks.length === 0) return notFound("", tasks);
+    const options = tasks
+      .slice(0, 5)
+      .map((task, index) => `${index + 1}. ${task.title}`)
+      .join("；");
+    return [
+      {
+        type: "ask",
+        question: `要处理哪一条？当前有：${options}。可以说「删掉 ${tasks[0].title}」。`,
+      },
+    ];
+  }
   let match = findTask(reference, tasks);
+  // 「买牛奶这条待办」直接匹配不上时，去掉「这条待办」再试一次
+  if (!match.task && !match.ambiguous) {
+    const stripped = stripTaskSuffix(reference);
+    if (stripped !== reference && stripped.length >= 2) {
+      const retry = findTask(stripped, tasks);
+      if (retry.task || retry.ambiguous) match = retry;
+    }
+  }
   // 只说了「这个」「它」这类指代，没有可匹配的标题时，退到按状态找唯一候选
   if (!match.task && !match.ambiguous && normalize(reference).length < 2) {
     const pool =
@@ -340,7 +392,7 @@ function withTask(
     const options = match.candidates.map((task, index) => `${index + 1}. ${task.title}`).join("；");
     return [{ type: "ask", question: `有几条任务比较像，你说的是哪一个？${options}` }];
   }
-  if (!match.task) return notFound();
+  if (!match.task) return notFound(reference, tasks);
   return [build(match.task.id)];
 }
 
@@ -350,6 +402,28 @@ export const FALLBACK_QUESTION =
 // 返回 null 表示规则引擎没听懂，交给上层决定是否问模型。
 export function parseRuleActions(text: string, tasks: Task[]): Action[] | null {
   const message = text.trim();
+
+  // 这三类先判：它们听着像「要做一件事」，其实是对清单或对话的操作
+  if (CLEAR_DONE_RE.test(message)) {
+    const done = tasks.filter((task) => task.done);
+    if (done.length === 0) return [{ type: "ask", question: "现在没有已完成的任务。" }];
+    return done.map((task) => ({ type: "delete", id: task.id }));
+  }
+
+  if (CLEAR_ALL_RE.test(message)) {
+    if (tasks.length === 0) return [{ type: "ask", question: "清单已经是空的。" }];
+    return tasks.map((task) => ({ type: "delete", id: task.id }));
+  }
+
+  if (CLEAR_CHAT_RE.test(message)) {
+    return [
+      {
+        type: "ask",
+        question:
+          "聊过的内容在页头「清空对话」里清，点两次确认；任务不会跟着删。要删任务就说「删掉买牛奶」，删已完成的可以说「清空已完成」。",
+      },
+    ];
+  }
 
   for (const pattern of CREATE_PATTERNS) {
     const matched = message.match(pattern);

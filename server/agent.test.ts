@@ -488,3 +488,87 @@ test("「这周五」指本周那天，当天就是当天", async (t) => {
   const expected = daysFromToday((4 - current + 7) % 7);
   assert.equal(store.list()[0]?.dueAt, expected);
 });
+
+test("「把买牛奶这条待办删掉」能匹配到已完成的任务", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("牛奶买好了");
+
+  const answer = await say("把买牛奶这条待办删掉");
+  assert.match(answer, /已删除「买牛奶」/);
+  assert.equal(store.list().length, 0);
+});
+
+test("「买牛奶这个任务完成了」也能按去掉后缀的标题匹配", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+
+  const answer = await say("买牛奶这个任务完成了");
+  assert.match(answer, /已把「买牛奶」标记为完成/);
+  assert.equal(store.list()[0]?.done, true);
+});
+
+test("等备注时「清除记忆」只说明去哪清，不建任务", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+
+  const answer = await say("清除记忆");
+  assert.match(answer, /清空对话/);
+  assert.deepEqual(
+    store.list().map((task) => task.title),
+    ["买牛奶"],
+  );
+});
+
+test("「清空已完成」只删已完成的任务", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("再记一条取快递");
+  await say("没有");
+  await say("牛奶买好了");
+
+  const answer = await say("清空已完成");
+  assert.match(answer, /已删除「买牛奶」/);
+  assert.deepEqual(
+    store.list().map((task) => task.title),
+    ["取快递"],
+  );
+});
+
+test("「删除全部任务」把清单清空", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("再记一条取快递");
+  await say("没有");
+
+  const answer = await say("删除全部任务");
+  assert.match(answer, /已删除「买牛奶」/);
+  assert.match(answer, /已删除「取快递」/);
+  assert.equal(store.list().length, 0);
+});
+
+test("只说了「删除待办」没给标题时反问，不误删也不新建", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("再记一条取快递");
+  await say("没有");
+
+  const answer = await say("删除待办");
+  assert.match(answer, /要处理哪一条|说的是哪一个/);
+  assert.equal(store.list().length, 2);
+});
+
+test("清单只剩一条时，说「删除待办」也不擅自删", async (t) => {
+  const { store, say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+
+  const answer = await say("删除待办");
+  assert.match(answer, /要处理哪一条/);
+  assert.equal(store.list().length, 1);
+});

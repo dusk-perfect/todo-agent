@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env server/index.ts",
     "build": "esbuild src/main.tsx --bundle --minify --outfile=dist/chat.js",
+    "prestart": "npm run build",
     "start": "node --env-file-if-exists=.env server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test server/*.test.ts",

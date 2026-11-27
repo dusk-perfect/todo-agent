@@ -64,6 +64,17 @@ test("验收对话：创建、查看、完成、删除全流程", async (t) => {
   assert.doesNotMatch(final, /取快递/);
 });
 
+test("任务全部完成时，不说「其中 0 项待办」", async (t) => {
+  const { say } = await startConversation(t);
+  await say("帮我记一下买牛奶");
+  await say("没有");
+  await say("牛奶买好了");
+
+  const answer = await say("我有哪些任务？");
+  assert.match(answer, /共 1 项，都已完成/);
+  assert.doesNotMatch(answer, /0 项待办/);
+});
+
 test("空清单与超出能力范围的输入", async (t) => {
   const { say } = await startConversation(t);
   assert.match(await say("看看我的待办"), /空的/);

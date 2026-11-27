@@ -168,10 +168,7 @@ export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<
     if (title && asked) return answer;
     // 追问被打断时说明一句，免得用户以为刚才那条被改了
     if (title && pending) {
-      return (
-        `这看着是另一件事，我新建了「${title}」，上面那条「${pending.title}」没动。\n\n${answer}` +
-        detailPrompt(title)
-      );
+      return `这算另一件事，「${pending.title}」的备注先留空。\n\n${answer}` + detailPrompt(title);
     }
     if (title) return answer + detailPrompt(title);
   }

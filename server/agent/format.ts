@@ -57,7 +57,11 @@ function groupByDay(tasks: Task[]): DayGroup[] {
 export function renderList(tasks: Task[]): string {
   if (tasks.length === 0) return "清单是空的，还没有待办。";
   const pending = tasks.filter((task) => !task.done).length;
-  const header = `共 ${tasks.length} 项，其中 ${pending} 项待办：`;
+  // 一条都没剩下时不说「其中 0 项待办」，读着别扭
+  const header =
+    pending === 0
+      ? `共 ${tasks.length} 项，都已完成：`
+      : `共 ${tasks.length} 项，其中 ${pending} 项待办：`;
   const groups = groupByDay(tasks);
 
   // 一条都没排期时不用多一个「未排期」标题
